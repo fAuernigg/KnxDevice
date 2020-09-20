@@ -24,7 +24,11 @@
 #ifndef KNXDPT_H
 #define KNXDPT_H
 
-#include <avr/pgmspace.h> // DPT arrays are stored in flash using PROG MEMORY
+#if (defined(__AVR__))
+#include <avr\pgmspace.h>
+#else
+#include <pgmspace.h>
+#endif
 
 // List of the DPT formats
 // A Character
