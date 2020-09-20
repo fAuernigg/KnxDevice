@@ -189,11 +189,12 @@ byte KnxTpUart::AttachComObjectsList(KnxComObject** comObjectsList, byte listSiz
   _comObjectsList = comObjectsList;
   // Creation of the ordered index table
   _orderedIndexTable = (byte*) malloc(_assignedComObjectsNb);
-  word minMin = 0x0000;   // minimum min value searched  
+  memset(_orderedIndexTable, 255, _assignedComObjectsNb);
+  word minMin = 0x0000;   // minimum min value searched
   word foundMin = 0xFFFF; // min value found so far
   for (byte i=0; i < _assignedComObjectsNb; i++)
   {
-    for (byte j=0; j < listSize ; j++) 
+    for (byte j=0; j < listSize ; j++)
     {
       if ( (IS_COM(j)) && (ADDR(j)>=minMin) && (ADDR(j)<=foundMin) )
       {
@@ -561,24 +562,28 @@ byte i, searchIndexStart, searchIndexStop, searchIndexRange;
   // if _assignedComObjectsNb >= 16 => divisionCounter = 1
   // if _assignedComObjectsNb >= 32 => divisionCounter = 2
   // if _assignedComObjectsNb >= 64 => divisionCounter = 3
-  // if _assignedComObjectsNb >= 128 => divisionCounter = 4    
-  for (i=4; _assignedComObjectsNb >>i ; i++) divisionCounter++; 
+  // if _assignedComObjectsNb >= 128 => divisionCounter = 4
+  for (i=4; _assignedComObjectsNb >>i ; i++) divisionCounter++;
 
   // the starting point is to search on the whole address range (0 -> _assignedComObjectsNb -1)
   searchIndexStart = 0; searchIndexStop = _assignedComObjectsNb - 1; searchIndexRange = _assignedComObjectsNb;
-  
+
   // reduce the address range if needed
   while(divisionCounter)
-  { 
+  {
     searchIndexRange>>=1; // Divide range width by 2
-    if ( addr >= _comObjectsList[_orderedIndexTable[searchIndexStart+searchIndexRange]]->GetAddr())
+    if (_orderedIndexTable[searchIndexStart+searchIndexRange]!=255
+    && addr >= _comObjectsList[_orderedIndexTable[searchIndexStart+searchIndexRange]]->GetAddr())
       searchIndexStart += searchIndexRange ;
     else searchIndexStop-=searchIndexRange;
     divisionCounter --;
   }
-  
+
   // search the address value and index in the reduced range
-  for (i = searchIndexStart; ((_comObjectsList[_orderedIndexTable[i]]->GetAddr() != addr) && (i <= searchIndexStop)); i++);
+  for (i = searchIndexStart;
+      (_orderedIndexTable[i]!=255 && _orderedIndexTable[i]<=_assignedComObjectsNb &&
+      _comObjectsList[_orderedIndexTable[i]]->GetAddr() != addr && i <= searchIndexStop);
+      i++);
   if (i > searchIndexStop) return false; // Address is NOT part of the assigned addresses
   // Address is part of the assigned addresses
   index = _orderedIndexTable[i];
