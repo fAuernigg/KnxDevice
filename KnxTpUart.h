@@ -162,7 +162,7 @@ class KnxTpUart {
     type_tpuart_rx _rx;                       // Reception structure
     type_tpuart_tx _tx;                       // Transmission structure
     type_EventCallbackFctPtr _evtCallbackFct; // Pointer to the EVENTS callback function
-    KnxComObject *_comObjectsList;            // Attached list of com objects
+    KnxComObject **_comObjectsList;            // Attached list of com objects
     byte _assignedComObjectsNb;               // Nb of assigned com objects
     byte *_orderedIndexTable;                 // Table containing the assigned com objects indexes ordered by increasing @
     byte _stateIndication;                    // Value of the last received state indication
@@ -230,6 +230,8 @@ static const char _debugErrorText[];
     // return KNX_TPUART_ERROR_NOT_INIT_STATE (254) if the TPUART is not in Init state
     // The function must be called prior to Init() execution
     byte AttachComObjectsList(KnxComObject KnxComObjectsList[], byte listSize);
+
+    byte AttachComObjectsList(KnxComObject** comObjectsList, byte listSize);
 
     // Init
     // returns ERROR (255) if the TP-UART is not in INIT state, else returns OK (0)

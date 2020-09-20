@@ -47,13 +47,16 @@ KnxDevice::KnxDevice()
    _nbOfInits = 0;
    _debugStrPtr = NULL;
 #endif
+    _comObjectsNb = 0;
+    dynComObjects = 0;
 }
 
 
 // Start the KNX Device
 // return KNX_DEVICE_ERROR (255) if begin() failed
 // else return KNX_DEVICE_OK
-e_KnxDeviceStatus KnxDevice::begin(HardwareSerial& serial, word physicalAddr)
+e_KnxDeviceStatus KnxDevice::begin(HardwareSerial& serial, word physicalAddr,
+                            KnxComObject** dynComObjects_, byte numberObjects)
 {
   _tpuart = new KnxTpUart(serial ,physicalAddr, NORMAL);
   _rxTelegram = &_tpuart->GetReceivedTelegram();
@@ -69,7 +72,9 @@ e_KnxDeviceStatus KnxDevice::begin(HardwareSerial& serial, word physicalAddr)
 #endif
     return KNX_DEVICE_ERROR;
   }
-  _tpuart->AttachComObjectsList(_comObjectsList, _comObjectsNb);
+  dynComObjects = dynComObjects_;
+  _comObjectsNb = numberObjects;
+  _tpuart->AttachComObjectsList(dynComObjects, _comObjectsNb);
   _tpuart->SetEvtCallback(&KnxDevice::GetTpUartEvents);
   _tpuart->SetAckCallback(&KnxDevice::TxTelegramAck);
   _tpuart->Init();
@@ -115,7 +120,7 @@ word nowTimeMillis, nowTimeMicros;
     // To avoid EIB bus overloading, we wait for 500 ms between each Init read request
     if (TimeDeltaWord(nowTimeMillis, _lastInitTimeMillis) > 500 )
     { 
-      while ( (_initIndex< _comObjectsNb) && (_comObjectsList[_initIndex].GetValidity() )) _initIndex++;
+      while ( (_initIndex< _comObjectsNb) && (dynComObjects[_initIndex]->GetValidity() )) _initIndex++;
 
       if (_initIndex == _comObjectsNb) 
       {
@@ -154,7 +159,7 @@ word nowTimeMillis, nowTimeMicros;
       {
         case EIB_READ_REQUEST: // a read operation of a Com Object on the EIB network is required
           //_objectsList[action.index].CopyToTelegram(_txTelegram, KNX_COMMAND_VALUE_READ);
-          _comObjectsList[action.index].CopyAttributes(_txTelegram);
+          dynComObjects[action.index]->CopyAttributes(_txTelegram);
           _txTelegram.ClearLongPayload(); _txTelegram.ClearFirstPayloadByte(); // Is it required to have a clean payload ??
           _txTelegram.SetCommand(KNX_COMMAND_VALUE_READ);
           _txTelegram.UpdateChecksum();
@@ -163,8 +168,8 @@ word nowTimeMillis, nowTimeMicros;
           break;
 
         case EIB_RESPONSE_REQUEST: // a response operation of a Com Object on the EIB network is required
-          _comObjectsList[action.index].CopyAttributes(_txTelegram);
-          _comObjectsList[action.index].CopyValue(_txTelegram);
+          dynComObjects[action.index]->CopyAttributes(_txTelegram);
+          dynComObjects[action.index]->CopyValue(_txTelegram);
           _txTelegram.SetCommand(KNX_COMMAND_VALUE_RESPONSE);
           _txTelegram.UpdateChecksum();
           _tpuart->SendTelegram(_txTelegram);
@@ -173,18 +178,18 @@ word nowTimeMillis, nowTimeMicros;
 
         case EIB_WRITE_REQUEST: // a write operation of a Com Object on the EIB network is required
           // update the com obj value
-          if ((_comObjectsList[action.index].GetLength()) <= 2 )
-            _comObjectsList[action.index].UpdateValue(action.byteValue);
+          if ((dynComObjects[action.index]->GetLength()) <= 2 )
+            dynComObjects[action.index]->UpdateValue(action.byteValue);
           else
           {
-            _comObjectsList[action.index].UpdateValue(action.valuePtr);
+            dynComObjects[action.index]->UpdateValue(action.valuePtr);
             free(action.valuePtr);
           }
           // transmit the value through EIB network only if the Com Object has transmit attribute
-          if ( (_comObjectsList[action.index].GetIndicator()) & KNX_COM_OBJ_T_INDICATOR)
+          if ( (dynComObjects[action.index]->GetIndicator()) & KNX_COM_OBJ_T_INDICATOR)
           {
-            _comObjectsList[action.index].CopyAttributes(_txTelegram);
-            _comObjectsList[action.index].CopyValue(_txTelegram);
+            dynComObjects[action.index]->CopyAttributes(_txTelegram);
+            dynComObjects[action.index]->CopyValue(_txTelegram);
             _txTelegram.SetCommand(KNX_COMMAND_VALUE_WRITE);
             _txTelegram.UpdateChecksum();
             _tpuart->SendTelegram(_txTelegram);
@@ -212,7 +217,7 @@ word nowTimeMillis, nowTimeMicros;
 // NB : The returned value will be hazardous in case of use with long objects
 byte KnxDevice::read(byte objectIndex)
 {
-  return _comObjectsList[objectIndex].GetValue();
+  return dynComObjects[objectIndex]->GetValue();
 }
 
 
@@ -221,16 +226,16 @@ byte KnxDevice::read(byte objectIndex)
 template <typename T>  e_KnxDeviceStatus KnxDevice::read(byte objectIndex, T& returnedValue)
 {
   // Short com object case
-  if (_comObjectsList[objectIndex].GetLength()<=2)
+  if (dynComObjects[objectIndex]->GetLength()<=2)
   {
-    returnedValue = (T) _comObjectsList[objectIndex].GetValue();
+    returnedValue = (T) dynComObjects[objectIndex]->GetValue();
     return KNX_DEVICE_OK;
   }
   else // long object case, let's see if we are able to translate the DPT value
   {
     byte dptValue[14]; // define temporary DPT value with max length
-    _comObjectsList[objectIndex].GetValue(dptValue);
-    return ConvertFromDpt(dptValue, returnedValue, pgm_read_byte(&KnxDPTIdToFormat[_comObjectsList[objectIndex].GetDptId()]));
+    dynComObjects[objectIndex]->GetValue(dptValue);
+    return ConvertFromDpt(dptValue, returnedValue, pgm_read_byte(&KnxDPTIdToFormat[dynComObjects[objectIndex]->GetDptId()]));
   }
 }
 
@@ -249,7 +254,7 @@ template e_KnxDeviceStatus KnxDevice::read <double>(byte objectIndex, double& re
 // Read any type of com object (DPT value provided as is)
 e_KnxDeviceStatus KnxDevice::read(byte objectIndex, byte returnedValue[])
 {
-  _comObjectsList[objectIndex].GetValue(returnedValue);
+  dynComObjects[objectIndex]->GetValue(returnedValue);
   return KNX_DEVICE_OK;
 }
 
@@ -262,13 +267,13 @@ template <typename T>  e_KnxDeviceStatus KnxDevice::write(byte objectIndex, T va
 {
   type_tx_action action;
   byte *destValue;
-  byte length = _comObjectsList[objectIndex].GetLength();
+  byte length = dynComObjects[objectIndex]->GetLength();
   
   if (length <= 2 ) action.byteValue = (byte) value; // short object case
   else
   { // long object case, let's try to translate value to the com object DPT
     destValue = (byte *) malloc(length-1); // allocate the memory for DPT
-    e_KnxDeviceStatus status = ConvertToDpt(value, destValue, pgm_read_byte(&KnxDPTIdToFormat[_comObjectsList[objectIndex].GetDptId()]));
+    e_KnxDeviceStatus status = ConvertToDpt(value, destValue, pgm_read_byte(&KnxDPTIdToFormat[dynComObjects[objectIndex]->GetDptId()]));
     if (status) // translation error
     { 
       free(destValue);
@@ -301,7 +306,7 @@ e_KnxDeviceStatus KnxDevice::write(byte objectIndex, byte valuePtr[])
 {
 type_tx_action action;
 byte *dptValue;
-byte length = _comObjectsList[objectIndex].GetLength();
+byte length = dynComObjects[objectIndex]->GetLength();
 
   if (length>2) // check we are in long object case
   { // add WRITE action in the TX action queue
@@ -359,7 +364,7 @@ byte targetedComObjIndex; // index of the Com Object targeted by the event
 #endif
         // READ command coming from the bus
         // if the Com Object has read attribute, then add RESPONSE action in the TX action list
-        if ( (_comObjectsList[targetedComObjIndex].GetIndicator()) & KNX_COM_OBJ_R_INDICATOR)
+        if ( (Knx.dynComObjects[targetedComObjIndex]->GetIndicator()) & KNX_COM_OBJ_R_INDICATOR)
         { // The targeted Com Object can indeed be read
           action.command = EIB_RESPONSE_REQUEST;
           action.index = targetedComObjIndex;
@@ -373,9 +378,9 @@ byte targetedComObjIndex; // index of the Com Object targeted by the event
 #endif
         // RESPONSE command coming from EIB network, we update the value of the corresponding Com Object.
         // We 1st check that the corresponding Com Object has UPDATE attribute
-        if((_comObjectsList[targetedComObjIndex].GetIndicator()) & KNX_COM_OBJ_U_INDICATOR)
+        if((Knx.dynComObjects[targetedComObjIndex]->GetIndicator()) & KNX_COM_OBJ_U_INDICATOR)
         {
-          _comObjectsList[targetedComObjIndex].UpdateValue(*(Knx._rxTelegram));
+          Knx.dynComObjects[targetedComObjIndex]->UpdateValue(*(Knx._rxTelegram));
           //We notify the upper layer of the update
           knxEvents(targetedComObjIndex);
         }
@@ -388,9 +393,9 @@ byte targetedComObjIndex; // index of the Com Object targeted by the event
 #endif
         // WRITE command coming from EIB network, we update the value of the corresponding Com Object.
         // We 1st check that the corresponding Com Object has WRITE attribute
-        if((_comObjectsList[targetedComObjIndex].GetIndicator()) & KNX_COM_OBJ_W_INDICATOR)
+        if((Knx.dynComObjects[targetedComObjIndex]->GetIndicator()) & KNX_COM_OBJ_W_INDICATOR)
         {
-          _comObjectsList[targetedComObjIndex].UpdateValue(*(Knx._rxTelegram));
+          Knx.dynComObjects[targetedComObjIndex]->UpdateValue(*(Knx._rxTelegram));
           //We notify the upper layer of the update
           knxEvents(targetedComObjIndex);
         }

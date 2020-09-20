@@ -122,15 +122,25 @@ byte attempts = 10;
 }
 
 
+
+//byte KnxTpUart::AttachComObjectsList(KnxComObject** comObjectsList, byte listSize) {
+//    return AttachComObjectsList(*comObjectsList, listSize);
+//}
+
+byte KnxTpUart::AttachComObjectsList(KnxComObject comObjectsList[], byte listSize)
+{
+  return AttachComObjectsList(&comObjectsList, listSize);
+}
+
 // Attach a list of com objects
 // NB1 : only the objects with "communication" attribute are considered by the TPUART
 // NB2 : In case of objects with identical address, the object with highest index only is considered
 // return KNX_TPUART_ERROR_NOT_INIT_STATE (254) if the TPUART is not in Init state
 // The function must be called prior to Init() execution
-byte KnxTpUart::AttachComObjectsList(KnxComObject comObjectsList[], byte listSize)
+byte KnxTpUart::AttachComObjectsList(KnxComObject** comObjectsList, byte listSize)
 {
-#define IS_COM(index) (comObjectsList[index].GetIndicator() & KNX_COM_OBJ_C_INDICATOR)
-#define ADDR(index) (comObjectsList[index].GetAddr())
+#define IS_COM(index) (comObjectsList[index]->GetIndicator() & KNX_COM_OBJ_C_INDICATOR)
+#define ADDR(index) (comObjectsList[index]->GetAddr())
 
   if ((_rx.state!=RX_INIT) || (_tx.state!=TX_INIT)) return KNX_TPUART_ERROR_NOT_INIT_STATE;
 
@@ -561,14 +571,14 @@ byte i, searchIndexStart, searchIndexStop, searchIndexRange;
   while(divisionCounter)
   { 
     searchIndexRange>>=1; // Divide range width by 2
-    if ( addr >= _comObjectsList[_orderedIndexTable[searchIndexStart+searchIndexRange]].GetAddr())
+    if ( addr >= _comObjectsList[_orderedIndexTable[searchIndexStart+searchIndexRange]]->GetAddr())
       searchIndexStart += searchIndexRange ;
     else searchIndexStop-=searchIndexRange;
     divisionCounter --;
   }
   
   // search the address value and index in the reduced range
-  for (i = searchIndexStart; ((_comObjectsList[_orderedIndexTable[i]].GetAddr() != addr) && (i <= searchIndexStop)); i++);
+  for (i = searchIndexStart; ((_comObjectsList[_orderedIndexTable[i]]->GetAddr() != addr) && (i <= searchIndexStop)); i++);
   if (i > searchIndexStop) return false; // Address is NOT part of the assigned addresses
   // Address is part of the assigned addresses
   index = _orderedIndexTable[i];

@@ -99,9 +99,6 @@ template <typename T> e_KnxDeviceStatus ConvertToDpt(T value, byte dpt[], byte d
 
 
 class KnxDevice {
-    static KnxComObject _comObjectsList[];          // List of Com Objects attached to the KNX Device
-                                                    // The definition shall be provided by the end-user
-    static const byte _comObjectsNb;                // Nb of attached Com Objects
                                                     // The value shall be provided by the end-user
     e_KnxDeviceState _state;                        // Current KnxDevice state
     KnxTpUart *_tpuart;                             // TPUART associated to the KNX Device
@@ -125,12 +122,15 @@ class KnxDevice {
     KnxDevice (const KnxDevice&); // private copy constructor (singleton design pattern) 
 
   public:
+    KnxComObject** dynComObjects;
+    byte _comObjectsNb;                // Nb of attached Com Objects
     static KnxDevice Knx; // unique KnxDevice instance (singleton design pattern)
 
     // Start the KNX Device
     // return KNX_DEVICE_ERROR (255) if begin() failed
     // else return KNX_DEVICE_OK
-    e_KnxDeviceStatus begin(HardwareSerial& serial, word physicalAddr);
+    e_KnxDeviceStatus begin(HardwareSerial& serial, word physicalAddr, 
+                            KnxComObject** dynComObjects_, byte numberObjects);
 
     // Stop the KNX Device
     void end();
