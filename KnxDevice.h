@@ -129,8 +129,11 @@ class KnxDevice {
     // Start the KNX Device
     // return KNX_DEVICE_ERROR (255) if begin() failed
     // else return KNX_DEVICE_OK
-    e_KnxDeviceStatus begin(HardwareSerial& serial, word physicalAddr, 
+    e_KnxDeviceStatus begin(HardwareSerial& serial, word physicalAddr,
                             KnxComObject** dynComObjects_, byte numberObjects);
+
+    void setTransmitCallback(type_TransmitCallbackFctPtr cb) { _extTxCb = cb; }
+    void setExternalRxTelegram(KnxTelegram &telegram) { _tpuart->SetExternalRxTelegram(telegram); }
 
     // Stop the KNX Device
     void end();
@@ -177,6 +180,8 @@ class KnxDevice {
 #endif
 
   private:
+    type_TransmitCallbackFctPtr _extTxCb;
+
     // Static GetTpUartEvents() function called by the KnxTpUart layer (callback)
     static void GetTpUartEvents(e_KnxTpUartEvent event);
 

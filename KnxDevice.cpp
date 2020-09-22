@@ -23,6 +23,7 @@
 
 #include "KnxDevice.h"
 
+
 static inline word TimeDeltaWord(word now, word before) { return (word)(now - before); }
 
 #ifdef KNXDEVICE_DEBUG_INFO
@@ -49,6 +50,7 @@ KnxDevice::KnxDevice()
 #endif
     _comObjectsNb = 0;
     dynComObjects = 0;
+    _extTxCb = 0;
 }
 
 
@@ -59,9 +61,14 @@ e_KnxDeviceStatus KnxDevice::begin(HardwareSerial& serial, word physicalAddr,
                             KnxComObject** dynComObjects_, byte numberObjects)
 {
   _tpuart = new KnxTpUart(serial ,physicalAddr, NORMAL);
+
+  _tpuart->SetTransmitCallback(_extTxCb);
+
   _rxTelegram = &_tpuart->GetReceivedTelegram();
   // delay(10000); // Workaround for init issue with bus-powered arduino
-                   // the issue is reproduced on one (faulty?) TPUART device only, so remove it for the moment.
+                  // the issue is reproduced on one (faulty?) TPUART device only, so remove it for the moment.
+
+
   if(_tpuart->Reset()!= KNX_TPUART_OK)
   {
     delete(_tpuart);
@@ -72,6 +79,7 @@ e_KnxDeviceStatus KnxDevice::begin(HardwareSerial& serial, word physicalAddr,
 #endif
     return KNX_DEVICE_ERROR;
   }
+
   dynComObjects = dynComObjects_;
   _comObjectsNb = numberObjects;
   _tpuart->AttachComObjectsList(dynComObjects, _comObjectsNb);
@@ -87,6 +95,7 @@ e_KnxDeviceStatus KnxDevice::begin(HardwareSerial& serial, word physicalAddr,
 #if defined(KNXDEVICE_DEBUG_INFO)
    _nbOfInits = 0;
 #endif
+
   return KNX_DEVICE_OK;
 }
 
@@ -115,30 +124,36 @@ word nowTimeMillis, nowTimeMicros;
 
   // STEP 1 : Initialize Com Objects having Init Read attribute
   if(!_initCompleted)
-  { 
+  {
     nowTimeMillis = millis();
     // To avoid EIB bus overloading, we wait for 500 ms between each Init read request
     if (TimeDeltaWord(nowTimeMillis, _lastInitTimeMillis) > 500 )
-    { 
+    {
       while ( (_initIndex< _comObjectsNb) && (dynComObjects[_initIndex]->GetValidity() )) _initIndex++;
 
-      if (_initIndex == _comObjectsNb) 
+      if (_initIndex == _comObjectsNb)
       {
         _initCompleted = true; // All the Com Object initialization have been performed
       //  DebugInfo(String("KNXDevice INFO: Com Object init completed, ")+ String( _nbOfInits) + String("objs initialized.\n"));
       }
-      else 
+      else
       { // Com Object to be initialised has been found
         // Add a READ request in the TX action list
 #if defined(KNXDEVICE_DEBUG_INFO) || defined(KNXDEVICE_DEBUG_INFO_VERBOSE)
         _nbOfInits++;
 #endif
-        action.command = EIB_READ_REQUEST;
-        action.index = _initIndex;
-        _txActionList.Append(action);
-        _lastInitTimeMillis = millis(); // Update the timer
+        //if (!_extTxCb)
+        {
+          // support init read request for _extTxCb
+          action.command = EIB_READ_REQUEST;
+          action.index = _initIndex;
+
+          _initIndex = _comObjectsNb;
+          _txActionList.Append(action);
+          _lastInitTimeMillis = millis(); // Update the timer
+        }
       }
-    } 
+    }
   }
 
   // STEP 2 : Get new received EIB messages from the TPUART
@@ -330,7 +345,7 @@ void KnxDevice::update(byte objectIndex)
 type_tx_action action;
   action.command = EIB_READ_REQUEST;
   action.index = objectIndex;
-  _txActionList.Append(action); 
+  _txActionList.Append(action);
 }
 
 

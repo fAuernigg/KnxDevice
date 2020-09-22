@@ -95,6 +95,7 @@ enum e_KnxTpUartEvent {
 
 // Typedef for events callback function
 typedef void (*type_EventCallbackFctPtr) (e_KnxTpUartEvent);
+typedef unsigned char (*type_TransmitCallbackFctPtr) (KnxTelegram *telegram);
 
 // --- Definitions for the RECEPTION part ----
 // RX states
@@ -192,6 +193,9 @@ static const char _debugErrorText[];
     // The function must be called prior to Init() execution
     byte SetEvtCallback(type_EventCallbackFctPtr);
 
+    void SetTransmitCallback(type_TransmitCallbackFctPtr cb) { _extTxCb = cb; }
+    void SetExternalRxTelegram(KnxTelegram &telegram);
+
     // Set ACK callback function
     // return KNX_TPUART_ERROR (255) if the parameter is NULL
     // return KNX_TPUART_ERROR_NOT_INIT_STATE (254) if the TPUART is not in Init state
@@ -271,6 +275,7 @@ static const char _debugErrorText[];
     void DEBUG_SendStateReqCommand(void);
 
   private:
+    type_TransmitCallbackFctPtr _extTxCb;
 
   // Private INLINED functions (see definitions later in this file)
 #if defined(KNXTPUART_DEBUG_INFO)

@@ -217,6 +217,12 @@ byte KnxTpUart::AttachComObjectsList(KnxComObject** comObjectsList, byte listSiz
 // Init must be called after every reset() execution
 byte KnxTpUart::Init(void)
 {
+  if (_extTxCb) {
+    _rx.state = RX_IDLE_WAITING_FOR_CTRL_FIELD;
+    _tx.state = TX_IDLE;
+    return KNX_TPUART_OK;
+  }
+
   byte tpuartCmd[3];
 
   if ((_rx.state!=RX_INIT) || (_tx.state!=TX_INIT)) return KNX_TPUART_ERROR_NOT_INIT_STATE;
@@ -262,19 +268,48 @@ byte KnxTpUart::Init(void)
 byte KnxTpUart::SendTelegram(KnxTelegram& sentTelegram)
 {
   if (_tx.state != TX_IDLE) return KNX_TPUART_ERROR; // TX not initialized or busy
-  
+
   if (sentTelegram.GetSourceAddress() != _physicalAddr) // Check that source addr equals TPUART physical addr
   { // if not, let's force source addr to the correct value
     sentTelegram.SetSourceAddress(_physicalAddr);
     sentTelegram.UpdateChecksum();
   }
+
+  if (_extTxCb) {
+    _tx.state = TX_IDLE;
+      return _extTxCb(&sentTelegram);;
+  }
+
   _tx.sentTelegram = &sentTelegram;
   _tx.nbRemainingBytes = sentTelegram.GetTelegramLength();
   _tx.txByteIndex = 0; // Set index to 0
   _tx.state = TX_TELEGRAM_SENDING_ONGOING;
+
   return KNX_TPUART_OK;
 }
 
+  static byte readBytesNb; // Nb of read bytes during an EIB telegram reception
+  static KnxTelegram telegram; // telegram being received
+  static byte addressedComObjectIndex; // index of the com object targeted by the received telegram
+  static word lastByteRxTimeMicrosec;
+
+void KnxTpUart::SetExternalRxTelegram(KnxTelegram &rxTelegram)
+{
+    if (IsAddressAssigned(rxTelegram.GetTargetAddress(), addressedComObjectIndex))
+    { // Message addressed to us
+      //rxTelegram.Copy(telegram);
+      //_rx.state = RX_EIB_TELEGRAM_RECEPTION_ADDRESSED;
+
+        if (rxTelegram.IsChecksumCorrect())
+        { // checksum correct, let's update the _rx struct with the received telegram and correct index
+          rxTelegram.Copy(_rx.receivedTelegram);
+          _rx.addressedComObjectIndex  = addressedComObjectIndex;
+          _evtCallbackFct(TPUART_EVENT_RECEIVED_EIB_TELEGRAM); // Notify the new received telegram
+
+          _rx.state = RX_IDLE_WAITING_FOR_CTRL_FIELD;
+        }
+    }
+}
 
 // Reception task
 // This function shall be called periodically in order to allow a correct reception of the EIB bus data
@@ -283,13 +318,26 @@ byte KnxTpUart::SendTelegram(KnxTelegram& sentTelegram)
 // In order not to miss any End Of Packets (i.e. a gap from 2 to 2,5ms), the function shall be called at a max period of 0,5ms.
 // Typical calling period is 400 usec.
 void KnxTpUart::RXTask(void)
-{
-byte incomingByte;
-word nowTime;
-static byte readBytesNb; // Nb of read bytes during an EIB telegram reception
-static KnxTelegram telegram; // telegram being received
-static byte addressedComObjectIndex; // index of the com object targeted by the received telegram
-static word lastByteRxTimeMicrosec;
+  {
+  byte incomingByte;
+  word nowTime;
+
+  if (_extTxCb) {
+    switch (_rx.state) {
+      case RX_EIB_TELEGRAM_RECEPTION_ADDRESSED:
+        if (telegram.IsChecksumCorrect())
+        { // checksum correct, let's update the _rx struct with the received telegram and correct index
+          telegram.Copy(_rx.receivedTelegram);
+          _rx.addressedComObjectIndex  = addressedComObjectIndex;
+          _evtCallbackFct(TPUART_EVENT_RECEIVED_EIB_TELEGRAM); // Notify the new received telegram
+
+          _rx.state = RX_IDLE_WAITING_FOR_CTRL_FIELD;
+        }
+        break;
+      default: break;
+    }
+    return;
+  }
 
 // === STEP 1 : Check EOP in case a Telegram is being received ===
   if (_rx.state >= RX_EIB_TELEGRAM_RECEPTION_STARTED)
@@ -456,9 +504,18 @@ static word lastByteRxTimeMicrosec;
 // Typical calling period is 800 usec.
 void KnxTpUart::TXTask(void)
 {
-word nowTime;
-byte txByte[2];
-static word sentMessageTimeMillisec;
+  if (_extTxCb) {
+    /*if (_tx.state == TX_TELEGRAM_SENDING_ONGOING) {
+      (void) _extTxCb(_tx.sentTelegram);
+      _tx.state = TX_IDLE;
+      //_tx.state =  TX_TELEGRAM_SENDING_ONGOING;
+      //_tx.state = TX_WAITING_ACK;
+    }*/
+    return;
+  }
+  word nowTime;
+  byte txByte[2];
+  static word sentMessageTimeMillisec;
 
   // STEP 1 : Manage Message Acknowledge timeout
   switch (_tx.state)
