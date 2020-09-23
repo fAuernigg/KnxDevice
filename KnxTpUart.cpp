@@ -80,6 +80,12 @@ KnxTpUart::~KnxTpUart()
 // Return KNX_TPUART_ERROR in case of TPUART Reset failure
 byte KnxTpUart::Reset(void)
 {
+  if (_extTxCb) {
+    _rx.state = RX_INIT;
+    _tx.state = TX_INIT;
+    return KNX_TPUART_OK;
+  }
+
 word startTime, nowTime;
 byte attempts = 10;
 
