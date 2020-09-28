@@ -17,26 +17,18 @@
 //    along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 
-// File : KnxTpUart.cpp
-// Author : Franck Marini
-// Description : Communication with TPUART
-// Module dependencies : HardwareSerial, KnxTelegram, KnxComObject
+// File : StKnxCoupler.cpp
+// Author : Franz Auernigg
+// Description : Communication with StKnxCoupler Chip
+// Module dependencies : KnxTelegram, KnxComObject
 
-#include "KnxTpUart.h"
+#include "StKnxCoupler.h"
 
 static inline word TimeDeltaWord(word now, word before) { return (word)(now - before); }
 
-#ifdef KNXTPUART_DEBUG_INFO
-const char KnxTpUart::_debugInfoText[] = "KNXTPUART INFO: ";
-#endif
-
-#ifdef KNXTPUART_DEBUG_ERROR
-const char KnxTpUart::_debugErrorText[] = "KNXTPUART ERROR: ";
-#endif
-
-KnxTpUart::KnxTpUart(HardwareSerial &serial, word physicalAddr,
-    type_KnxBusCouplerMode mode) :
-  _serial(serial),
+StKnxCoupler::StKnxCoupler(type_TransmitCallbackFctPtr cb, word physicalAddr,
+  type_KnxBusCouplerMode mode) :
+  _extTxCb(cb),
   _physicalAddr(physicalAddr),
   _mode(mode)
 {
@@ -60,13 +52,12 @@ KnxTpUart::KnxTpUart(HardwareSerial &serial, word physicalAddr,
 
 
 // Destructor
-KnxTpUart::~KnxTpUart()
+StKnxCoupler::~StKnxCoupler()
 {
   if (_orderedIndexTable) free(_orderedIndexTable);
   // close the serial communication if opened
   if ( (_rx.state > RX_RESET) || (_tx.state > TX_RESET) )
   {
-    _serial.end();
 #if defined(KNXTPUART_DEBUG_INFO)
     DebugInfo("Destructor: connection closed, byebye\n");
 #endif
@@ -77,58 +68,17 @@ KnxTpUart::~KnxTpUart()
 }
 
 
-// Reset the Arduino UART port and the TPUART device
-// Return KNX_BUSCOUPLER_ERROR in case of TPUART Reset failure
-byte KnxTpUart::Reset(void)
+// Reset implementation for stknx bus read thread
+byte StKnxCoupler::Reset(void)
 {
-word startTime, nowTime;
-byte attempts = 10;
+  _rx.state = RX_INIT;
+  _tx.state = TX_INIT;
 
-  if ( (_rx.state > RX_RESET) || (_tx.state > TX_RESET) )
-  { // HOT RESET case
-    _serial.end(); // stop the serial communication before restarting it
-    _rx.state = RX_RESET; _tx.state = TX_RESET;
-  }
-
-  // CONFIGURATION OF THE ARDUINO USART WITH CORRECT FRAME FORMAT (19200, 8 bits, parity even, 1 stop bit)
-  _serial.begin(19200,SERIAL_8E1);
-  //_serial.begin(19200);
-  //UCSR1C = UCSR1C | B00100000; // Even Parity
-
-  while(attempts--)
-  { // we send a RESET REQUEST and wait for the reset indication answer
-    // the sequence is repeated every sec as long as we do not get the reset indication
-    _serial.write(TPUART_RESET_REQ); // send RESET REQUEST
-
-    for (nowTime = startTime = (word) millis() ; TimeDeltaWord(nowTime,startTime) < 1000 /* 1 sec */ ; nowTime = (word)millis())
-    {
-      if (_serial.available() > 0)
-      {
-        if (_serial.read() == TPUART_RESET_INDICATION)
-        {
-          _rx.state = RX_INIT; _tx.state = TX_INIT;
-#if defined(KNXTPUART_DEBUG_INFO)
-          DebugInfo("Reset successful\n");
-#endif
-          return KNX_BUSCOUPLER_OK;
-        }
-      }
-    } // 1 sec ellapsed
-  } // while(attempts--)
-  _serial.end();
-#if defined(KNXTPUART_DEBUG_ERROR)
-  DebugError("Reset failed, no answer from TPUART device\n");
-#endif
-  return KNX_BUSCOUPLER_ERROR;
+  return KNX_BUSCOUPLER_OK;
 }
 
 
-
-//byte KnxTpUart::AttachComObjectsList(KnxComObject** comObjectsList, byte listSize) {
-//    return AttachComObjectsList(*comObjectsList, listSize);
-//}
-
-byte KnxTpUart::AttachComObjectsList(KnxComObject comObjectsList[], byte listSize)
+byte StKnxCoupler::AttachComObjectsList(KnxComObject comObjectsList[], byte listSize)
 {
   return AttachComObjectsList(&comObjectsList, listSize);
 }
@@ -138,7 +88,7 @@ byte KnxTpUart::AttachComObjectsList(KnxComObject comObjectsList[], byte listSiz
 // NB2 : In case of objects with identical address, the object with highest index only is considered
 // return KNX_BUSCOUPLER_ERROR_NOT_INIT_STATE (254) if the TPUART is not in Init state
 // The function must be called prior to Init() execution
-byte KnxTpUart::AttachComObjectsList(KnxComObject** comObjectsList, byte listSize)
+byte StKnxCoupler::AttachComObjectsList(KnxComObject** comObjectsList, byte listSize)
 {
 #define IS_COM(index) (comObjectsList[index]->GetIndicator() & KNX_COM_OBJ_C_INDICATOR)
 #define ADDR(index) (comObjectsList[index]->GetAddr())
@@ -213,46 +163,13 @@ byte KnxTpUart::AttachComObjectsList(KnxComObject** comObjectsList, byte listSiz
 }
 
 
-// Init
-// returns ERROR (255) if the TP-UART is not in INIT state, else returns OK (0)
+// Init for stknx
 // Init must be called after every reset() execution
-byte KnxTpUart::Init(void)
+byte StKnxCoupler::Init(void)
 {
-  byte tpuartCmd[3];
+  _rx.state = RX_IDLE_WAITING_FOR_CTRL_FIELD;
+  _tx.state = TX_IDLE;
 
-  if ((_rx.state!=RX_INIT) || (_tx.state!=TX_INIT)) return KNX_BUSCOUPLER_ERROR_NOT_INIT_STATE;
-
-  // BUS MONITORING MODE in case it is selected
-  if (_mode == BUS_MONITOR)
-  {
-    _serial.write(TPUART_ACTIVATEBUSMON_REQ); // Send bus monitoring activation request
-#if defined(KNXTPUART_DEBUG_INFO)
-    DebugInfo("Init : Monitoring mode started\n");
-#endif
-  }
-  else // NORMAL mode by default
-  {
-#if defined(KNXTPUART_DEBUG_INFO)
-    if (_comObjectsList == NULL)  DebugInfo("Init : warning : empty object list!\n");
-#endif
-    if (_evtCallbackFct == NULL) return KNX_BUSCOUPLER_ERROR_NULL_EVT_CALLBACK_FCT;
-    if (_tx.ackFctPtr == NULL) return KNX_BUSCOUPLER_ERROR_NULL_ACK_CALLBACK_FCT;
-
-    // Set Physical address. This allows to activate address evaluation by the TPUART
-    tpuartCmd[0] = TPUART_SET_ADDR_REQ;
-    tpuartCmd[1] = (byte)(_physicalAddr>>8);
-    tpuartCmd[2] = (byte)_physicalAddr;
-    _serial.write(tpuartCmd,3);
-
-    // Call U_State.request-Service in order to have the field _stateIndication up-to-date
-    _serial.write(TPUART_STATE_REQ);
-
-    _rx.state = RX_IDLE_WAITING_FOR_CTRL_FIELD;
-    _tx.state = TX_IDLE;
-#if defined(KNXTPUART_DEBUG_INFO)
-    DebugInfo("Init : Normal mode started\n");
-#endif
-  }
   return KNX_BUSCOUPLER_OK;
 }
 
@@ -260,7 +177,7 @@ byte KnxTpUart::Init(void)
 // Send a KNX telegram
 // returns ERROR (255) if TX is not available, or if the telegram is not valid, else returns OK (0)
 // NB : the source address is forced to TPUART physical address value
-byte KnxTpUart::SendTelegram(KnxTelegram& sentTelegram)
+byte StKnxCoupler::SendTelegram(KnxTelegram& sentTelegram)
 {
   if (_tx.state != TX_IDLE) return KNX_BUSCOUPLER_ERROR; // TX not initialized or busy
 
@@ -270,6 +187,11 @@ byte KnxTpUart::SendTelegram(KnxTelegram& sentTelegram)
     sentTelegram.UpdateChecksum();
   }
 
+
+  _tx.state = TX_IDLE;
+  return _extTxCb(&sentTelegram);
+
+  // TODO: test send later in TxTask
   _tx.sentTelegram = &sentTelegram;
   _tx.nbRemainingBytes = sentTelegram.GetTelegramLength();
   _tx.txByteIndex = 0; // Set index to 0
@@ -278,8 +200,28 @@ byte KnxTpUart::SendTelegram(KnxTelegram& sentTelegram)
   return KNX_BUSCOUPLER_OK;
 }
 
+static KnxTelegram telegram; // telegram being received
+static byte addressedComObjectIndex; // index of the com object targeted by the received telegram
+static word lastByteRxTimeMicrosec;
 
-void KnxTpUart::SetReceivedTelegram(KnxTelegram &rxTelegram) {}
+
+void StKnxCoupler::SetReceivedTelegram(KnxTelegram &rxTelegram)
+{
+    if (IsAddressAssigned(rxTelegram.GetTargetAddress(), addressedComObjectIndex))
+    { // Message addressed to us
+      //rxTelegram.Copy(telegram);
+      //_rx.state = RX_EIB_TELEGRAM_RECEPTION_ADDRESSED;
+
+        if (rxTelegram.IsChecksumCorrect())
+        { // checksum correct, let's update the _rx struct with the received telegram and correct index
+          rxTelegram.Copy(_rx.receivedTelegram);
+          _rx.addressedComObjectIndex  = addressedComObjectIndex;
+          _evtCallbackFct(BUSCOUPLER_EVENT_RECEIVED_EIB_TELEGRAM); // Notify the new received telegram
+
+          _rx.state = RX_IDLE_WAITING_FOR_CTRL_FIELD;
+        }
+    }
+}
 
 // Reception task
 // This function shall be called periodically in order to allow a correct reception of the EIB bus data
@@ -287,14 +229,26 @@ void KnxTpUart::SetReceivedTelegram(KnxTelegram &rxTelegram) {}
 // is transmitted in 0,58ms.
 // In order not to miss any End Of Packets (i.e. a gap from 2 to 2,5ms), the function shall be called at a max period of 0,5ms.
 // Typical calling period is 400 usec.
-void KnxTpUart::RXTask(void)
+void StKnxCoupler::RXTask(void)
   {
-  byte incomingByte;
   word nowTime;
-  static byte readBytesNb; // Nb of read bytes during an EIB telegram reception
-  static KnxTelegram telegram; // telegram being received
-  static byte addressedComObjectIndex; // index of the com object targeted by the received telegram
-  static word lastByteRxTimeMicrosec;
+
+  if (_extTxCb) {
+    switch (_rx.state) {
+      case RX_EIB_TELEGRAM_RECEPTION_ADDRESSED:
+        if (telegram.IsChecksumCorrect())
+        { // checksum correct, let's update the _rx struct with the received telegram and correct index
+          telegram.Copy(_rx.receivedTelegram);
+          _rx.addressedComObjectIndex  = addressedComObjectIndex;
+          _evtCallbackFct(BUSCOUPLER_EVENT_RECEIVED_EIB_TELEGRAM); // Notify the new received telegram
+
+          _rx.state = RX_IDLE_WAITING_FOR_CTRL_FIELD;
+        }
+        break;
+      default: break;
+    }
+    return;
+  }
 
 // === STEP 1 : Check EOP in case a Telegram is being received ===
   if (_rx.state >= RX_EIB_TELEGRAM_RECEPTION_STARTED)
@@ -332,123 +286,6 @@ void KnxTpUart::RXTask(void)
       _rx.state = RX_IDLE_WAITING_FOR_CTRL_FIELD;
     } // end EOP detected
   }
-
-// === STEP 2 : Get New RX Data ===
-  if (_serial.available() > 0)
-  {
-    incomingByte = (byte)(_serial.read());
-    lastByteRxTimeMicrosec = (word)micros();
-
-    switch (_rx.state)
-    {
-      case RX_IDLE_WAITING_FOR_CTRL_FIELD:
-          // CASE OF EIB MESSAGE
-          if ((incomingByte & EIB_CONTROL_FIELD_PATTERN_MASK) == EIB_CONTROL_FIELD_VALID_PATTERN)
-          {
-            _rx.state = RX_EIB_TELEGRAM_RECEPTION_STARTED;
-            readBytesNb = 1; telegram.WriteRawByte(incomingByte,0);
-          }
-          // CASE OF TPUART_DATA_CONFIRM_SUCCESS NOTIFICATION
-          else if (incomingByte == TPUART_DATA_CONFIRM_SUCCESS)
-          {
-            if (_tx.state == TX_WAITING_ACK)
-            {
-              _tx.ackFctPtr(ACK_RESPONSE);
-              _tx.state = TX_IDLE;
-            }
-#if defined(KNXTPUART_DEBUG_ERROR)
-            else DebugError("Rx: unexpected TPUART_DATA_CONFIRM_SUCCESS received!\n");
-#endif
-          }
-          // CASE OF TPUART_RESET NOTIFICATION
-          else if (incomingByte == TPUART_RESET_INDICATION)
-          {
-
-            if ( (_tx.state == TX_TELEGRAM_SENDING_ONGOING ) || (_tx.state == TX_WAITING_ACK ) )
-            { // response to the TP UART transmission
-              _tx.ackFctPtr(BUSCOUPLER_RESET_RESPONSE);
-            }
-           _tx.state = TX_STOPPED;
-           _rx.state = RX_STOPPED;
-           _evtCallbackFct(BUSCOUPLER_EVENT_RESET); // Notify RESET
-           return;
-          }
-          // CASE OF STATE_INDICATION RESPONSE
-          else if ((incomingByte & TPUART_STATE_INDICATION_MASK) == TPUART_STATE_INDICATION)
-          {
-            _evtCallbackFct(BUSCOUPLER_EVENT_STATE_INDICATION); // Notify STATE INDICATION
-            _stateIndication = incomingByte;
-#if defined(KNXTPUART_DEBUG_INFO)
-            DebugInfo("Rx: State Indication Received\n");
-#endif
-          }
-          // CASE OF TPUART_DATA_CONFIRM_FAILED NOTIFICATION
-          else if (incomingByte == TPUART_DATA_CONFIRM_FAILED)
-          {
-            // NACK following Telegram transmission
-            if (_tx.state == TX_WAITING_ACK)
-            {
-              _tx.ackFctPtr(NACK_RESPONSE);
-              _tx.state = TX_IDLE;
-            }
-#if defined(KNXTPUART_DEBUG_ERROR)
-            else DebugError("Rx: unexpected TPUART_DATA_CONFIRM_FAILED received!\n");
-#endif
-          }
-#if defined(KNXTPUART_DEBUG_ERROR)
-          // UNKNOWN CONTROL FIELD RECEIVED
-          else if (incomingByte)
-            DebugError("Rx: Unknown Control Field received\n");
-#endif
-          // else ignore "0" value sent on Reset by TPUART prior to TPUART_RESET_INDICATION
-          break;
-
-      case RX_EIB_TELEGRAM_RECEPTION_STARTED :
-          telegram.WriteRawByte(incomingByte,readBytesNb);
-          readBytesNb++;
-
-          if (readBytesNb==3)
-          {  // We have just received the source address
-             // we check whether the received EIB telegram is coming from us (i.e. telegram is sent by the TPUART itself)
-            if ( telegram.GetSourceAddress() == _physicalAddr )
-            { // the message is coming from us, we consider it as not addressed and we don't send any ACK service
-              _rx.state = RX_EIB_TELEGRAM_RECEPTION_NOT_ADDRESSED;
-            }
-          }
-          else if (readBytesNb==6) // We have just read the routing field containing the address type and the payload length
-          { // We check if the message is addressed to us in order to send the appropriate acknowledge
-            if(IsAddressAssigned(telegram.GetTargetAddress(), addressedComObjectIndex))
-            { // Message addressed to us
-              _rx.state = RX_EIB_TELEGRAM_RECEPTION_ADDRESSED;
-              //sent the correct ACK service now
-              // the ACK info must be sent latest 1,7 ms after receiving the address type octet of an addressed frame
-              _serial.write(TPUART_RX_ACK_SERVICE_ADDRESSED);
-            }
-            else
-            { // Message NOT addressed to us
-              _rx.state = RX_EIB_TELEGRAM_RECEPTION_NOT_ADDRESSED;
-              //sent the correct ACK service now
-              // the ACK info must be sent latest 1,7 ms after receiving the address type octet of an addressed frame
-              _serial.write(TPUART_RX_ACK_SERVICE_NOT_ADDRESSED);
-            }
-          }
-          break;
-
-      case RX_EIB_TELEGRAM_RECEPTION_ADDRESSED :
-          if (readBytesNb == KNX_TELEGRAM_MAX_SIZE) _rx.state = RX_EIB_TELEGRAM_RECEPTION_LENGTH_INVALID;
-          else
-          {
-          telegram.WriteRawByte(incomingByte,readBytesNb);
-          readBytesNb++;
-          }
-          break;
-
-    //  case RX_EIB_TELEGRAM_RECEPTION_LENGTH_INVALID : break; // if the message is too long, nothing to do except waiting for EOP
-    //  case RX_EIB_TELEGRAM_RECEPTION_NOT_ADDRESSED : break; // if the message is not addressed, nothing to do except waiting for EOP
-
-      default : break;
-    } // switch (_rx.state)
-  } // if (_serial.available() > 0)
 }
 
 
@@ -459,10 +296,18 @@ void KnxTpUart::RXTask(void)
 // Sending one byte of a telegram consists in transmitting 2 characters (1,16ms)
 // Let's wait around 800us between each telegram piece sending so that the 64byte TX buffer remains almost empty.
 // Typical calling period is 800 usec.
-void KnxTpUart::TXTask(void)
+void StKnxCoupler::TXTask(void)
 {
+  // TODO handle trigger sending via txtask
+  /*if (_tx.state == TX_TELEGRAM_SENDING_ONGOING) {
+    (void) _extTxCb(_tx.sentTelegram);
+    _tx.state = TX_IDLE;
+    //_tx.state =  TX_TELEGRAM_SENDING_ONGOING;
+    //_tx.state = TX_WAITING_ACK;
+  }*/
+  return;
+
   word nowTime;
-  byte txByte[2];
   static word sentMessageTimeMillisec;
 
   // STEP 1 : Manage Message Acknowledge timeout
@@ -492,20 +337,14 @@ void KnxTpUart::TXTask(void)
     {
       {
         if (_tx.nbRemainingBytes == 1)
-        { // We are sending the last byte, i.e checksum
-          txByte[0] = TPUART_DATA_END_REQ + _tx.txByteIndex;
-          txByte[1] = _tx.sentTelegram->ReadRawByte(_tx.txByteIndex);
-          _serial.write(txByte,2); // write the UART control field and the data byte
+        {
 
           // Message sending completed
           sentMessageTimeMillisec = (word)millis(); // memorize sending time in order to manage ACK timeout
-	  _tx.state = TX_WAITING_ACK;
+	        _tx.state = TX_WAITING_ACK;
         }
         else
         {
-          txByte[0] = TPUART_DATA_START_CONTINUE_REQ + _tx.txByteIndex;
-          txByte[1] = _tx.sentTelegram->ReadRawByte(_tx.txByteIndex);
-          _serial.write(txByte,2); // write the UART control field and the data byte
           _tx.txByteIndex++;
           _tx.nbRemainingBytes--;
         }
@@ -522,41 +361,16 @@ void KnxTpUart::TXTask(void)
 // The function returns true if a new data has been retrieved (data pointer in argument), else false
 // It shall be called periodically (max period of 0,5ms) in order to allow correct data reception
 // Typical calling period is 400 usec.
-boolean KnxTpUart::GetMonitoringData(type_MonitorData& data)
+boolean StKnxCoupler::GetMonitoringData(type_MonitorData& data)
 {
-word nowTime;
-static type_MonitorData currentData={true,0};
-static word lastByteRxTimeMicrosec;
-
-  // STEP 1 : Check EOP
-  if (!(currentData.isEOP)) // check that we have not already detected an EOP
-  {
-    nowTime = (word) micros(); // word cast because a 65ms counter is enough
-    if(TimeDeltaWord(nowTime,lastByteRxTimeMicrosec) > 2000 /* 2 ms */ )
-    {  // EOP detected
-      currentData.isEOP = true;
-      currentData.dataByte = 0;
-      data= currentData;
-      return true;
-    }
-  }
-  // STEP 2 : Get New RX Data
-  if (_serial.available() > 0)
-  {
-    currentData.dataByte = (byte)(_serial.read());
-    currentData.isEOP = false;
-    data= currentData;
-    lastByteRxTimeMicrosec = (word) micros();
-    return true;
-  }
-  return false; // No data received
+  return true;
 }
 
 
 // Check if the target address is an assigned com object one
 // if yes, then update index parameter with the index (in the list) of the targeted com object and return true
 // else return false
-boolean KnxTpUart::IsAddressAssigned(word addr, byte &index) const
+boolean StKnxCoupler::IsAddressAssigned(word addr, byte &index) const
 {
 byte divisionCounter=0;
 byte i, searchIndexStart, searchIndexStop, searchIndexRange;
@@ -597,8 +411,8 @@ byte i, searchIndexStart, searchIndexStop, searchIndexRange;
 
 
 // DEBUG purpose functions
-void KnxTpUart::DEBUG_SendResetCommand() { _serial.write(TPUART_RESET_REQ); }
+void StKnxCoupler::DEBUG_SendResetCommand() { }
 
-void KnxTpUart::DEBUG_SendStateReqCommand() { _serial.write(TPUART_STATE_REQ); }
+void StKnxCoupler::DEBUG_SendStateReqCommand() { }
 
 //EOF

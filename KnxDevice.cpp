@@ -39,7 +39,7 @@ KnxDevice& Knx = KnxDevice::Knx;
 KnxDevice::KnxDevice()
 {
   _state = INIT;
-  _tpuart = NULL;
+  _knxBus = NULL;
   _txActionList= ActionRingBuffer<type_tx_action, ACTIONS_QUEUE_SIZE>();
   _initCompleted = false;
   _initIndex = 0;
@@ -50,29 +50,50 @@ KnxDevice::KnxDevice()
 #endif
     _comObjectsNb = 0;
     dynComObjects = 0;
-    _extTxCb = 0;
 }
 
+
+#ifdef HAVE_TPUART
+e_KnxDeviceStatus KnxDevice::begin(HardwareSerial& serial, word physicalAddr,
+                            KnxComObject** dynComObjects_, byte numberObjects)
+{
+  _knxBus = new KnxTpUart(serial ,physicalAddr, NORMAL);
+
+  return commonInit(dynComObjects_, numberObjects);
+}
+#endif
 
 // Start the KNX Device
 // return KNX_DEVICE_ERROR (255) if begin() failed
 // else return KNX_DEVICE_OK
-e_KnxDeviceStatus KnxDevice::begin(HardwareSerial& serial, word physicalAddr,
+#ifdef HAVE_STKNX
+e_KnxDeviceStatus KnxDevice::begin(type_TransmitCallbackFctPtr cb, word physicalAddr,
                             KnxComObject** dynComObjects_, byte numberObjects)
 {
-  _tpuart = new KnxTpUart(serial ,physicalAddr, NORMAL);
+  _knxBus = new StKnxCoupler(cb, physicalAddr, NORMAL);
 
-  _tpuart->SetTransmitCallback(_extTxCb);
+  return commonInit(dynComObjects_, numberObjects);
+}
 
-  _rxTelegram = &_tpuart->GetReceivedTelegram();
+
+void KnxDevice::setReceivedTelegram(KnxTelegram &telegram)
+{
+  _knxBus->SetReceivedTelegram(telegram);
+}
+#endif
+
+e_KnxDeviceStatus KnxDevice::commonInit(KnxComObject** dynComObjects_, byte numberObjects)
+{
+
+  _rxTelegram = &_knxBus->GetReceivedTelegram();
   // delay(10000); // Workaround for init issue with bus-powered arduino
                   // the issue is reproduced on one (faulty?) TPUART device only, so remove it for the moment.
 
 
-  if(_tpuart->Reset()!= KNX_TPUART_OK)
+  if(_knxBus->Reset()!= KNX_BUSCOUPLER_OK)
   {
-    delete(_tpuart);
-    _tpuart = NULL;
+    delete(_knxBus);
+    _knxBus = NULL;
     _rxTelegram = NULL;
 #if defined(KNXDEVICE_DEBUG_INFO)
     DebugInfo("Init Error!\n");
@@ -82,10 +103,10 @@ e_KnxDeviceStatus KnxDevice::begin(HardwareSerial& serial, word physicalAddr,
 
   dynComObjects = dynComObjects_;
   _comObjectsNb = numberObjects;
-  _tpuart->AttachComObjectsList(dynComObjects, _comObjectsNb);
-  _tpuart->SetEvtCallback(&KnxDevice::GetTpUartEvents);
-  _tpuart->SetAckCallback(&KnxDevice::TxTelegramAck);
-  _tpuart->Init();
+  _knxBus->AttachComObjectsList(dynComObjects, _comObjectsNb);
+  _knxBus->SetEvtCallback(&KnxDevice::GetTpUartEvents);
+  _knxBus->SetAckCallback(&KnxDevice::TxTelegramAck);
+  _knxBus->Init();
   _state = IDLE;
 #if defined(KNXDEVICE_DEBUG_INFO)
   DebugInfo("Init successful\n");
@@ -110,8 +131,8 @@ type_tx_action action;
   _initCompleted = false;
   _initIndex = 0;
   _rxTelegram = NULL;
-  delete(_tpuart);
-  _tpuart = NULL;
+  delete(_knxBus);
+  _knxBus = NULL;
 }
 
 
@@ -142,16 +163,13 @@ word nowTimeMillis, nowTimeMicros;
 #if defined(KNXDEVICE_DEBUG_INFO) || defined(KNXDEVICE_DEBUG_INFO_VERBOSE)
         _nbOfInits++;
 #endif
-        //if (!_extTxCb)
-        {
-          // support init read request for _extTxCb
-          action.command = EIB_READ_REQUEST;
-          action.index = _initIndex;
+        // init read request
+        action.command = EIB_READ_REQUEST;
+        action.index = _initIndex;
 
-          _initIndex = _comObjectsNb;
-          _txActionList.Append(action);
-          _lastInitTimeMillis = millis(); // Update the timer
-        }
+        _initIndex = _comObjectsNb;
+        _txActionList.Append(action);
+        _lastInitTimeMillis = millis(); // Update the timer
       }
     }
   }
@@ -162,7 +180,7 @@ word nowTimeMillis, nowTimeMicros;
   if (TimeDeltaWord(nowTimeMicros, _lastRXTimeMicros) > 400)
   {
     _lastRXTimeMicros = nowTimeMicros;
-    _tpuart->RXTask();
+    _knxBus->RXTask();
   }
 
   // STEP 3 : Send KNX messages following TX actions
@@ -178,7 +196,7 @@ word nowTimeMillis, nowTimeMicros;
           _txTelegram.ClearLongPayload(); _txTelegram.ClearFirstPayloadByte(); // Is it required to have a clean payload ??
           _txTelegram.SetCommand(KNX_COMMAND_VALUE_READ);
           _txTelegram.UpdateChecksum();
-          _tpuart->SendTelegram(_txTelegram);
+          _knxBus->SendTelegram(_txTelegram);
           _state = TX_ONGOING;
           break;
 
@@ -187,7 +205,7 @@ word nowTimeMillis, nowTimeMicros;
           dynComObjects[action.index]->CopyValue(_txTelegram);
           _txTelegram.SetCommand(KNX_COMMAND_VALUE_RESPONSE);
           _txTelegram.UpdateChecksum();
-          _tpuart->SendTelegram(_txTelegram);
+          _knxBus->SendTelegram(_txTelegram);
           _state = TX_ONGOING;
           break;
 
@@ -207,7 +225,7 @@ word nowTimeMillis, nowTimeMicros;
             dynComObjects[action.index]->CopyValue(_txTelegram);
             _txTelegram.SetCommand(KNX_COMMAND_VALUE_WRITE);
             _txTelegram.UpdateChecksum();
-            _tpuart->SendTelegram(_txTelegram);
+            _knxBus->SendTelegram(_txTelegram);
             _state = TX_ONGOING;
           }
           break;
@@ -216,14 +234,14 @@ word nowTimeMillis, nowTimeMicros;
       }
     }
   }
-  
+
   // STEP 4 : LET THE TP-UART TRANSMIT EIB MESSAGES
   // The TPUART TX task is executed every 800 us
   nowTimeMicros = micros();
   if (TimeDeltaWord(nowTimeMicros, _lastTXTimeMicros) > 800)
   {
     _lastTXTimeMicros = nowTimeMicros;
-    _tpuart->TXTask();
+    _knxBus->TXTask();
   }
 }
 
@@ -283,19 +301,19 @@ template <typename T>  e_KnxDeviceStatus KnxDevice::write(byte objectIndex, T va
   type_tx_action action;
   byte *destValue;
   byte length = dynComObjects[objectIndex]->GetLength();
-  
+
   if (length <= 2 ) action.byteValue = (byte) value; // short object case
   else
   { // long object case, let's try to translate value to the com object DPT
     destValue = (byte *) malloc(length-1); // allocate the memory for DPT
     e_KnxDeviceStatus status = ConvertToDpt(value, destValue, pgm_read_byte(&KnxDPTIdToFormat[dynComObjects[objectIndex]->GetDptId()]));
     if (status) // translation error
-    { 
+    {
       free(destValue);
       return status; // we cannot convert, we stop here
     }
     else  action.valuePtr = destValue;
-  }    
+  }
   // add WRITE action in the TX action queue
   action.command = EIB_WRITE_REQUEST;
   action.index = objectIndex;
@@ -352,7 +370,7 @@ type_tx_action action;
 // The function returns true if there is rx/tx activity ongoing, else false
 boolean KnxDevice::isActive(void) const
 {
-  if (_tpuart->IsActive()) return true; // TPUART is active
+  if (_knxBus->IsActive()) return true; // TPUART is active
   if (_state == TX_ONGOING) return true; // the Device is sending a request
   if(_txActionList.ElementsNb()) return true; // there is at least one tx action in the queue
   return false;
@@ -360,16 +378,16 @@ boolean KnxDevice::isActive(void) const
 
 
 // Static GetTpUartEvents() function called by the KnxTpUart layer (callback)
-void KnxDevice::GetTpUartEvents(e_KnxTpUartEvent event)
+void KnxDevice::GetTpUartEvents(e_KnxBusCouplerEvent event)
 {
 type_tx_action action;
 byte targetedComObjIndex; // index of the Com Object targeted by the event
 
   // Manage RECEIVED MESSAGES
-  if (event == TPUART_EVENT_RECEIVED_EIB_TELEGRAM)
+  if (event == BUSCOUPLER_EVENT_RECEIVED_EIB_TELEGRAM)
   {
     Knx._state = IDLE;
-    targetedComObjIndex = Knx._tpuart->GetTargetedComObjectIndex();
+    targetedComObjIndex = Knx._knxBus->GetTargetedComObjectIndex();
 
     switch(Knx._rxTelegram->GetCommand())
     {
@@ -423,31 +441,31 @@ byte targetedComObjIndex; // index of the Com Object targeted by the event
   }
 
   // Manage RESET events
-  if (event == TPUART_EVENT_RESET)
+  if (event == BUSCOUPLER_EVENT_RESET)
   {
-    while(Knx._tpuart->Reset()==KNX_TPUART_ERROR);
-    Knx._tpuart->Init();
+    while(Knx._knxBus->Reset()==KNX_BUSCOUPLER_ERROR);
+    Knx._knxBus->Init();
     Knx._state = IDLE;
   }
 }
 
 
 // Static TxTelegramAck() function called by the KnxTpUart layer (callback)
-void KnxDevice::TxTelegramAck(e_TpUartTxAck value)
+void KnxDevice::TxTelegramAck(e_BusCouplerTxAck value)
 {
   Knx._state = IDLE;
 #ifdef KNXDevice_DEBUG
   if(value != ACK_RESPONSE)
   {
     switch(value)
-    {  
+    {
       case NACK_RESPONSE: DebugInfo("NACK RESPONSE!!\n"); break;
       case NO_ANSWER_TIMEOUT: DebugInfo("NO ANSWER TIMEOUT RESPONSE!!\n");; break;
-      case TPUART_RESET_RESPONSE: DebugInfo("RESET RESPONSE!!\n");; break;
+      case BUSCOUPLER_RESET_RESPONSE: DebugInfo("RESET RESPONSE!!\n");; break;
     }
   }
 #endif // KNXDevice_DEBUG
-} 
+}
 
 
 // Functions to convert a standard C type to a DPT format
@@ -477,7 +495,7 @@ template <typename T> e_KnxDeviceStatus ConvertFromDpt(const byte dptOriginValue
       // Get the DPT sign, mantissa and exponent
       int signMultiplier = (dptOriginValue[0] & 0x80) ? -1 : 1;
       word absoluteMantissa = dptOriginValue[1] + ((dptOriginValue[0]&0x07)<<8);
-      if (signMultiplier == -1) 
+      if (signMultiplier == -1)
       { // Calculate absolute mantissa value in case of negative mantissa
         // Abs = 2's complement + 1
         absoluteMantissa = ((~absoluteMantissa)& 0x07FF ) + 1;
@@ -539,14 +557,14 @@ template <typename T> e_KnxDeviceStatus ConvertToDpt(T originValue, byte dptDest
 
       if (negativeSign)
       {
-        while(longValuex100 < (long)(-2048)) 
+        while(longValuex100 < (long)(-2048))
         {
            exponent++; round = (byte)(longValuex100) & 1 ; longValuex100>>=1; longValuex100|=0x80000000;
         }
       }
       else
       {
-        while(longValuex100 > (long)(2047)) 
+        while(longValuex100 > (long)(2047))
         {
           exponent++; round = (byte)(longValuex100) & 1 ; longValuex100>>=1;
         }
@@ -581,4 +599,3 @@ template e_KnxDeviceStatus ConvertToDpt <float>(float, byte dptDestValue[], byte
 template e_KnxDeviceStatus ConvertToDpt <double>(double, byte dptDestValue[], byte dptFormat);
 
 // EOF
-

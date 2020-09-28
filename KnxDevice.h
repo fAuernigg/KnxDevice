@@ -28,7 +28,20 @@
 #include "KnxTelegram.h"
 #include "KnxComObject.h"
 #include "ActionRingBuffer.h"
+#include "KnxBusCoupler.h"
+
+
+#define HAVE_TPUART
+#define HAVE_STKNX
+
+
+#ifdef HAVE_TPUART
 #include "KnxTpUart.h"
+#endif
+#ifdef HAVE_STKNX
+#include "StKnxCoupler.h"
+#endif
+
 
 // !!!!!!!!!!!!!!! FLAG OPTIONS !!!!!!!!!!!!!!!!!
 // DEBUG :
@@ -101,7 +114,7 @@ template <typename T> e_KnxDeviceStatus ConvertToDpt(T value, byte dpt[], byte d
 class KnxDevice {
                                                     // The value shall be provided by the end-user
     e_KnxDeviceState _state;                        // Current KnxDevice state
-    KnxTpUart *_tpuart;                             // TPUART associated to the KNX Device
+    KnxBusCoupler *_knxBus;                         // BuS coupler associated to the KNX Device
     ActionRingBuffer<type_tx_action, ACTIONS_QUEUE_SIZE> _txActionList; // Queue of transmit actions to be performed
     boolean _initCompleted;                         // True when all the Com Object with Init attr have been initialized
     byte _initIndex;                                // Index to the last initiated object
@@ -119,7 +132,7 @@ class KnxDevice {
   // Constructor, Destructor
     KnxDevice();  // private constructor (singleton design pattern)
     ~KnxDevice() {}  // private destructor (singleton design pattern)
-    KnxDevice (const KnxDevice&); // private copy constructor (singleton design pattern) 
+    KnxDevice (const KnxDevice&); // private copy constructor (singleton design pattern)
 
   public:
     KnxComObject** dynComObjects;
@@ -129,11 +142,19 @@ class KnxDevice {
     // Start the KNX Device
     // return KNX_DEVICE_ERROR (255) if begin() failed
     // else return KNX_DEVICE_OK
+#ifdef HAVE_TPUART
     e_KnxDeviceStatus begin(HardwareSerial& serial, word physicalAddr,
-                            KnxComObject** dynComObjects_, byte numberObjects);
+                          KnxComObject** dynComObjects_, byte numberObjects);
+#endif
 
-    void setTransmitCallback(type_TransmitCallbackFctPtr cb) { _extTxCb = cb; }
-    void setExternalRxTelegram(KnxTelegram &telegram) { _tpuart->SetExternalRxTelegram(telegram); }
+#ifdef HAVE_STKNX
+    e_KnxDeviceStatus begin(type_TransmitCallbackFctPtr cb, word physicalAddr,
+                          KnxComObject** dynComObjects_, byte numberObjects);
+    void setReceivedTelegram(KnxTelegram &telegram);
+#endif
+
+    e_KnxDeviceStatus commonInit(KnxComObject** dynComObjects_,
+                          byte numberObjects);
 
     // Stop the KNX Device
     void end();
@@ -144,7 +165,7 @@ class KnxDevice {
 
     // Quick method to read a short (<=1 byte) com object
     // NB : The returned value will be hazardous in case of use with long objects
-    byte read(byte objectIndex);  
+    byte read(byte objectIndex);
 
     // Read an usual format com object
     // Supported DPT formats are short com object, U16, V16, U32, V32, F16 and F32
@@ -163,7 +184,7 @@ class KnxDevice {
 
     // Update any type of com object (rough DPT value shall be provided)
     e_KnxDeviceStatus write(byte objectIndex, byte valuePtr[]);
-    
+
 
     // Com Object EIB Bus Update request
     // Request the local object to be updated with the value from the bus
@@ -180,13 +201,11 @@ class KnxDevice {
 #endif
 
   private:
-    type_TransmitCallbackFctPtr _extTxCb;
-
     // Static GetTpUartEvents() function called by the KnxTpUart layer (callback)
-    static void GetTpUartEvents(e_KnxTpUartEvent event);
+    static void GetTpUartEvents(e_KnxBusCouplerEvent event);
 
     // Static TxTelegramAck() function called by the KnxTpUart layer (callback)
-    static void TxTelegramAck(e_TpUartTxAck);
+    static void TxTelegramAck(e_BusCouplerTxAck);
 
 #if defined(KNXDEVICE_DEBUG_INFO)
     // Inline Debug function (definition later in this file)

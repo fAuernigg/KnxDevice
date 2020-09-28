@@ -17,10 +17,10 @@
 //    along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 
-// File : KnxTpUart.h
-// Author : Franck Marini
-// Description : Communication with TPUART
-// Module dependencies : HardwareSerial, KnxTelegram, KnxComObject
+// File : StKnxCoupler.h
+// Author : Franz Auernigg
+// Description : Communication with StKnxCoupler Chip
+// Module dependencies : KnxTelegram, KnxComObject
 
 // This library supports both TPUART version 1 and 2
 // The Siemens KNX TPUART version 1 datasheet is available at :
@@ -28,11 +28,10 @@
 // The Siemens KNX TPUART version 2 datasheet is available at :
 // http://www.hqs.sbt.siemens.com/Lowvoltage/gamma_product_data/gamma-b2b/TPUART2_technical-data.pdf
 
-#ifndef KNXTPUART_H
-#define KNXTPUART_H
+#ifndef STKNX_H
+#define STKNX_H
 
 #include "Arduino.h"
-#include "HardwareSerial.h"
 #include "KnxTelegram.h"
 #include "KnxComObject.h"
 #include "KnxBusCoupler.h"
@@ -43,53 +42,18 @@
 // #define KNXTPUART_DEBUG_ERROR  // Uncomment to activate error traces
 
 
-
-// Services to TPUART (hostcontroller -> TPUART) :
-#define TPUART_RESET_REQ                     0x01
-#define TPUART_STATE_REQ                     0x02
-#define TPUART_SET_ADDR_REQ                  0x28
-#define TPUART_DATA_START_CONTINUE_REQ       0x80
-#define TPUART_DATA_END_REQ                  0x40
-#define TPUART_ACTIVATEBUSMON_REQ            0x05
-#define TPUART_RX_ACK_SERVICE_ADDRESSED      0x11
-#define TPUART_RX_ACK_SERVICE_NOT_ADDRESSED  0x10
-
-
-// Services from TPUART (TPUART -> hostcontroller) :
-// 3 types of data are transmitted from TPUART to the host :
-// 1) EIB bus data (transparently transmitted). Format = EIB control field byte + rest of the telegram
-// 2) Additional information from the TP-UART. Format = 1 data byte
-// 3) Immediate acknowledge services (BUS MONITOR mode only)
-#define TPUART_RESET_INDICATION               0x03
-#define TPUART_DATA_CONFIRM_SUCCESS           0x8B
-#define TPUART_DATA_CONFIRM_FAILED            0x0B
-#define TPUART_STATE_INDICATION               0x07
-#define TPUART_STATE_INDICATION_MASK          0x07
-#define EIB_CONTROL_FIELD_PATTERN_MASK   B11010011
-#define EIB_CONTROL_FIELD_VALID_PATTERN  B10010000 // Only Standard Frame Format "10" is handled
-
-// Mask for STATE INDICATION service
-#define TPUART_STATE_INDICATION_SLAVE_COLLISION_MASK  0x80
-#define TPUART_STATE_INDICATION_RECEIVE_ERROR_MASK    0x40
-#define TPUART_STATE_INDICATION_TRANSMIT_ERROR_MASK   0x20
-#define TPUART_STATE_INDICATION_PROTOCOL_ERROR_MASK   0x10
-#define TPUART_STATE_INDICATION_TEMP_WARNING_MASK     0x08
-
-
-
-
-
-class KnxTpUart : public KnxBusCoupler {
-    HardwareSerial& _serial;                  // Arduino HW serial port connected to the TPUART
-    const word _physicalAddr;                 // Physical address set in the TP-UART
-    const type_KnxBusCouplerMode _mode;           // TpUart working Mode (Normal/Bus Monitor)
-    type_buscoupler_rx _rx;                       // Reception structure
-    type_buscoupler_tx _tx;                       // Transmission structure
+class StKnxCoupler : public KnxBusCoupler {
+    const type_TransmitCallbackFctPtr _extTxCb;
+    const word _physicalAddr;                 // Physical address set in the Bus Coupler
+    const type_KnxBusCouplerMode _mode;       // Bus Coupler working Mode (Normal/Bus Monitor)
+    type_buscoupler_rx _rx;                   // Reception structure
+    type_buscoupler_tx _tx;                   // Transmission structure
     type_EventCallbackFctPtr _evtCallbackFct; // Pointer to the EVENTS callback function
-    KnxComObject **_comObjectsList;            // Attached list of com objects
+    KnxComObject **_comObjectsList;           // Attached list of com objects
     byte _assignedComObjectsNb;               // Nb of assigned com objects
     byte *_orderedIndexTable;                 // Table containing the assigned com objects indexes ordered by increasing @
     byte _stateIndication;                    // Value of the last received state indication
+
 #if defined(KNXTPUART_DEBUG_INFO) || defined(KNXTPUART_DEBUG_ERROR)
     String *_debugStrPtr;
 #endif
@@ -103,10 +67,11 @@ static const char _debugErrorText[];
 
   public:
 
-    // Constructor / Destructor
-    KnxTpUart(HardwareSerial& serial, word physicalAddr,
-      type_KnxBusCouplerMode _mode);
-    ~KnxTpUart();
+  // Constructor / Destructor
+    StKnxCoupler(type_TransmitCallbackFctPtr cb, word physicalAddr,
+          type_KnxBusCouplerMode _mode);
+    ~StKnxCoupler();
+
 
   // INLINED functions (see definitions later in this file)
 
@@ -216,7 +181,7 @@ static const char _debugErrorText[];
 
 // ----- Definition of the INLINED functions :  ------------
 
-inline byte KnxTpUart::SetEvtCallback(type_EventCallbackFctPtr evtCallbackFct)
+inline byte StKnxCoupler::SetEvtCallback(type_EventCallbackFctPtr evtCallbackFct)
 {
   if (evtCallbackFct == NULL) return KNX_BUSCOUPLER_ERROR;
   if ((_rx.state!=RX_INIT) || (_tx.state!=TX_INIT)) return KNX_BUSCOUPLER_ERROR_NOT_INIT_STATE;
@@ -224,7 +189,7 @@ inline byte KnxTpUart::SetEvtCallback(type_EventCallbackFctPtr evtCallbackFct)
   return KNX_BUSCOUPLER_OK;
 }
 
-inline byte KnxTpUart::SetAckCallback(type_AckCallbackFctPtr ackFctPtr)
+inline byte StKnxCoupler::SetAckCallback(type_AckCallbackFctPtr ackFctPtr)
 {
   if (ackFctPtr == NULL) return KNX_BUSCOUPLER_ERROR;
   if ((_rx.state!=RX_INIT) || (_tx.state!=TX_INIT)) return KNX_BUSCOUPLER_ERROR_NOT_INIT_STATE;
@@ -232,17 +197,17 @@ inline byte KnxTpUart::SetAckCallback(type_AckCallbackFctPtr ackFctPtr)
   return KNX_BUSCOUPLER_OK;
 }
 
-inline byte KnxTpUart::GetStateIndication(void) const { return _stateIndication; }
+inline byte StKnxCoupler::GetStateIndication(void) const { return _stateIndication; }
 
-inline KnxTelegram& KnxTpUart::GetReceivedTelegram(void)
+inline KnxTelegram& StKnxCoupler::GetReceivedTelegram(void)
 { return _rx.receivedTelegram; }
 
 
-inline byte KnxTpUart::GetTargetedComObjectIndex(void) const
+inline byte StKnxCoupler::GetTargetedComObjectIndex(void) const
 { return _rx.addressedComObjectIndex; } // return the index of the adress addressed by the received KNX Telegram
 
 
-inline boolean KnxTpUart::IsActive(void) const
+inline boolean StKnxCoupler::IsActive(void) const
 {
   if ( _rx.state > RX_IDLE_WAITING_FOR_CTRL_FIELD) return true; // Rx activity
   if ( _tx.state > TX_IDLE) return true; // Tx activity
@@ -251,7 +216,7 @@ inline boolean KnxTpUart::IsActive(void) const
 
 
 #if defined(KNXTPUART_DEBUG_INFO) || defined(KNXTPUART_DEBUG_ERROR)
-inline void KnxTpUart::SetDebugString(String *strPtr)
+inline void StKnxCoupler::SetDebugString(String *strPtr)
 {
    _debugStrPtr = strPtr;
 }
@@ -259,7 +224,7 @@ inline void KnxTpUart::SetDebugString(String *strPtr)
 
 
 #if defined(KNXTPUART_DEBUG_INFO)
-inline void KnxTpUart::DebugInfo(const char comment[]) const
+inline void StKnxCoupler::DebugInfo(const char comment[]) const
 {
   if (_debugStrPtr != NULL) *_debugStrPtr += String(_debugInfoText) + String(comment);
 }
@@ -267,10 +232,10 @@ inline void KnxTpUart::DebugInfo(const char comment[]) const
 
 
 #if defined(KNXTPUART_DEBUG_ERROR)
-inline void KnxTpUart::DebugError(const char comment[]) const
+inline void StKnxCoupler::DebugError(const char comment[]) const
 {
   if (_debugStrPtr != NULL) *_debugStrPtr += String(_debugErrorText) + String(comment);
 }
 #endif
 
-#endif // KNXTPUART_H
+#endif // STKNX_H
