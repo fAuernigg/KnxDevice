@@ -501,7 +501,8 @@ template <typename T> e_KnxDeviceStatus ConvertFromDpt(const byte dptOriginValue
         absoluteMantissa = ((~absoluteMantissa)& 0x07FF ) + 1;
       }
       byte exponent = (dptOriginValue[0]&0x78)>>3;
-      resultValue = (T)(0.01 * ((long)absoluteMantissa << exponent) * signMultiplier);
+      float resF = 0.01 * (((long)absoluteMantissa) << exponent) * signMultiplier;
+      resultValue = (T) resF;
       return KNX_DEVICE_OK;
     }
     break;
