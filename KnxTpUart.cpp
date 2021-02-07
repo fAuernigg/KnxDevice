@@ -91,7 +91,7 @@ byte attempts = 10;
   }
 
   // CONFIGURATION OF THE ARDUINO USART WITH CORRECT FRAME FORMAT (19200, 8 bits, parity even, 1 stop bit)
-  _serial.begin(19200,SERIAL_8E1);
+  _serial.begin(19200, SERIAL_8E1, 14, 13, false);
   //_serial.begin(19200);
   //UCSR1C = UCSR1C | B00100000; // Even Parity
 
@@ -318,7 +318,9 @@ void KnxTpUart::RXTask(void)
             _evtCallbackFct(BUSCOUPLER_EVENT_RECEIVED_EIB_TELEGRAM); // Notify the new received telegram
           }
           else
-          {  // checksum incorrect, notify error
+          {
+            ESP_LOGE(TAG, "BUSCOUPLER_EVENT_EIB_TELEGRAM_RECEPTION_ERROR ...");
+            // checksum incorrect, notify error
             _evtCallbackFct(BUSCOUPLER_EVENT_EIB_TELEGRAM_RECEPTION_ERROR); // Notify telegram reception error
           }
           break;
@@ -334,7 +336,7 @@ void KnxTpUart::RXTask(void)
   }
 
 // === STEP 2 : Get New RX Data ===
-  if (_serial.available() > 0)
+  while (_serial.available() > 0)
   {
     incomingByte = (byte)(_serial.read());
     lastByteRxTimeMicrosec = (word)micros();
@@ -357,7 +359,10 @@ void KnxTpUart::RXTask(void)
               _tx.state = TX_IDLE;
             }
 #if defined(KNXTPUART_DEBUG_ERROR)
-            else DebugError("Rx: unexpected TPUART_DATA_CONFIRM_SUCCESS received!\n");
+            else {
+              DebugError("Rx: unexpected TPUART_DATA_CONFIRM_SUCCESS received!\n");
+              ESP_LOGE(TAG, "Rx: unexpected TPUART_DATA_CONFIRM_SUCCESS received");
+            }
 #endif
           }
           // CASE OF TPUART_RESET NOTIFICATION
@@ -392,13 +397,18 @@ void KnxTpUart::RXTask(void)
               _tx.state = TX_IDLE;
             }
 #if defined(KNXTPUART_DEBUG_ERROR)
-            else DebugError("Rx: unexpected TPUART_DATA_CONFIRM_FAILED received!\n");
+            else {
+                DebugError("Rx: unexpected TPUART_DATA_CONFIRM_FAILED received!\n");
+                ESP_LOGE(TAG, "Rx: unexpected TPUART_DATA_CONFIRM_FAILED received");
+            }
 #endif
           }
 #if defined(KNXTPUART_DEBUG_ERROR)
           // UNKNOWN CONTROL FIELD RECEIVED
-          else if (incomingByte)
+          else if (incomingByte) {
             DebugError("Rx: Unknown Control Field received\n");
+            //ESP_LOGE(TAG, "Rx: Unknown Control Field received: %02x", incomingByte);
+          }
 #endif
           // else ignore "0" value sent on Reset by TPUART prior to TPUART_RESET_INDICATION
           break;
