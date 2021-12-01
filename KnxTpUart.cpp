@@ -23,6 +23,7 @@
 // Module dependencies : HardwareSerial, KnxTelegram, KnxComObject
 
 #include "KnxTpUart.h"
+#include "esp_task_wdt.h"
 
 static inline word TimeDeltaWord(word now, word before) { return (word)(now - before); }
 
@@ -113,6 +114,7 @@ byte attempts = 10;
           return KNX_BUSCOUPLER_OK;
         }
       }
+      esp_task_wdt_reset();
     } // 1 sec ellapsed
   } // while(attempts--)
   _serial.end();

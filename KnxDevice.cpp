@@ -507,6 +507,11 @@ template <typename T> e_KnxDeviceStatus ConvertFromDpt(const byte dptOriginValue
     }
     break;
 
+    // support e.g. hsv dimmer color object
+    case KNX_DPT_FORMAT_U8U8U8:
+      return KNX_DEVICE_OK;
+      break;
+
     case KNX_DPT_FORMAT_F32 :
       return KNX_DEVICE_NOT_IMPLEMENTED;
     break;
