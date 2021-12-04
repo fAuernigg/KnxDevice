@@ -281,8 +281,9 @@ enum e_KnxDPT_ID {
   KNX_DPT_14_004, // 14.004 F32 DPT_Value_Mol
   KNX_DPT_14_005, // 14.005 F32 DPT_Value_Amplitude
   KNX_DPT_14_006, // 14.006 F32 DPT_Value_AngleRad
-  KNX_DPT_14_007 // 14.007 F32 DPT_Value_AngleDeg
-};		 
+  KNX_DPT_14_007, // 14.007 F32 DPT_Value_AngleDeg
+  KNX_DPT_232_600 // 232.600 B24 DPT_3Byte_Color_RgbHsv
+};
 
 // Definition of the format according to the ID
 // NB : table is stored in flash program memory to save RAM
@@ -392,7 +393,8 @@ const byte KnxDPTIdToFormat[] PROGMEM = {
   KNX_DPT_FORMAT_F32, //  KNX_DPT_14_004, // 14.004 F32 DPT_Value_Mol
   KNX_DPT_FORMAT_F32, //  KNX_DPT_14_005, // 14.005 F32 DPT_Value_Amplitude
   KNX_DPT_FORMAT_F32, //  KNX_DPT_14_006, // 14.006 F32 DPT_Value_AngleRad
-  KNX_DPT_FORMAT_F32 //  KNX_DPT_14_007, // 14.007 F32 DPT_Value_AngleDeg
+  KNX_DPT_FORMAT_F32, //  KNX_DPT_14_007, // 14.007 F32 DPT_Value_AngleDeg
+  KNX_DPT_FORMAT_B24  //  KNX_DPT_232_600 // 232.600 U24 DPT_3Byte_Color_RgbHsv
 };
 
 #endif // KNXDPT_H
