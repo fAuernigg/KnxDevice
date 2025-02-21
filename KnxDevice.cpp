@@ -58,6 +58,7 @@ e_KnxDeviceStatus KnxDevice::begin(HardwareSerial& serial, word physicalAddr,
                             KnxComObject** dynComObjects_, byte numberObjects)
 {
   _knxBus = new KnxTpUart(serial ,physicalAddr, NORMAL);
+  _rxTelegram = &_knxBus->GetReceivedTelegram();
 
   return commonInit(dynComObjects_, numberObjects);
 }
@@ -84,29 +85,48 @@ void KnxDevice::setReceivedTelegram(KnxTelegram &telegram)
 
 e_KnxDeviceStatus KnxDevice::commonInit(KnxComObject** dynComObjects_, byte numberObjects)
 {
+	dynComObjects = dynComObjects_;
+	_comObjectsNb = numberObjects;
 
-  _rxTelegram = &_knxBus->GetReceivedTelegram();
-  // delay(10000); // Workaround for init issue with bus-powered arduino
-                  // the issue is reproduced on one (faulty?) TPUART device only, so remove it for the moment.
+	return KNX_DEVICE_OK;
+}
 
 
-  if(_knxBus->Reset()!= KNX_BUSCOUPLER_OK)
-  {
-    delete(_knxBus);
-    _knxBus = NULL;
-    _rxTelegram = NULL;
+e_KnxDeviceStatus KnxDevice::checkInitBus()
+{
+  if (!_knxBus) {
 #if defined(KNXDEVICE_DEBUG_INFO)
-    DebugInfo("Init Error!\n");
+	Knx.DebugInfo("!_knxBus\n");
 #endif
-    return KNX_DEVICE_ERROR;
+  	return KNX_DEVICE_ERROR;
   }
+  else if (_state != INIT)
+	return KNX_DEVICE_OK;
 
-  dynComObjects = dynComObjects_;
-  _comObjectsNb = numberObjects;
+  byte e = _knxBus->Reset();
+  if(e == KNX_BUSCOUPLER_ERROR_ATTEMPT_EXCEED) {
+	delete(_knxBus);
+	_knxBus = NULL;
+	_rxTelegram = NULL;
+#if defined(KNXDEVICE_DEBUG_INFO)
+	DebugInfo("Init Error!\n");
+#endif
+#if defined(KNXDEVICE_DEBUG_INFO)
+	Knx.DebugInfo("!knx bus init attempt exceeded\n");
+#endif
+	return KNX_DEVICE_BUSSERIAL_RESET;
+  }
+  else if (e == KNX_BUSCOUPLER_ERROR)
+  	return KNX_DEVICE_TRYINIT;
+
   _knxBus->AttachComObjectsList(dynComObjects, _comObjectsNb);
   _knxBus->SetEvtCallback(&KnxDevice::GetTpUartEvents);
   _knxBus->SetAckCallback(&KnxDevice::TxTelegramAck);
-  _knxBus->Init();
+
+  e = _knxBus->Init();
+  if (e == KNX_BUSCOUPLER_ERROR_NOT_INIT_STATE)
+	return KNX_DEVICE_TRYINIT;
+
   _state = IDLE;
 #if defined(KNXDEVICE_DEBUG_INFO)
   DebugInfo("Init successful\n");
@@ -116,6 +136,7 @@ e_KnxDeviceStatus KnxDevice::commonInit(KnxComObject** dynComObjects_, byte numb
 #if defined(KNXDEVICE_DEBUG_INFO)
    _nbOfInits = 0;
 #endif
+
 
   return KNX_DEVICE_OK;
 }

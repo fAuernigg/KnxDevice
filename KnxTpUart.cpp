@@ -50,6 +50,8 @@ KnxTpUart::KnxTpUart(HardwareSerial &serial, word physicalAddr,
   _tx.nbRemainingBytes = 0;
   _tx.txByteIndex = 0;
   _stateIndication = 0;
+  _resetRespTimeout = 0;
+  _resetAttempts = KNX_RESET_ATTEMPTS;
   _evtCallbackFct = NULL;
   _comObjectsList = NULL;
   _assignedComObjectsNb = 0;
@@ -83,26 +85,41 @@ KnxTpUart::~KnxTpUart()
 // Return KNX_BUSCOUPLER_ERROR in case of TPUART Reset failure
 byte KnxTpUart::Reset(void)
 {
-word startTime, nowTime;
-byte attempts = 10;
-
-  if ( (_rx.state > RX_RESET) || (_tx.state > TX_RESET) )
-  { // HOT RESET case
-    _serial.end(); // stop the serial communication before restarting it
-    _rx.state = RX_RESET; _tx.state = TX_RESET;
-  }
+  /*word startTime, nowTime;
+  byte attempts = 10;*/
 
   // CONFIGURATION OF THE ARDUINO USART WITH CORRECT FRAME FORMAT (19200, 8 bits, parity even, 1 stop bit)
-  _serial.begin(19200, SERIAL_8E1, 14, 13, false);
+  if (!_resetRespTimeout || _resetRespTimeout < millis()) {
+	if (_resetRespTimeout) {
+		if ( (_rx.state > RX_RESET) || (_tx.state > TX_RESET) )
+		{	// HOT RESET case
+			_rx.state = RX_RESET; _tx.state = TX_RESET;
+		}
+		// stop the serial communication before restarting it
+  		_serial.end();
+	}
+
+	_serial.begin(19200, SERIAL_8E1, 14, 13, false);
+	_serial.write(TPUART_RESET_REQ); // send RESET REQUEST
+	_resetRespTimeout = millis() + KNX_RESETRESP_TIMEOUT;
+
+	if (!_resetAttempts) {
+		_resetAttempts = KNX_RESET_ATTEMPTS;
+		return KNX_BUSCOUPLER_ERROR_ATTEMPT_EXCEED;
+  	}
+	--_resetAttempts;
+  }
+
   //_serial.begin(19200);
   //UCSR1C = UCSR1C | B00100000; // Even Parity
 
-  while(attempts--)
+  /*while(attempts--)*/
   { // we send a RESET REQUEST and wait for the reset indication answer
     // the sequence is repeated every sec as long as we do not get the reset indication
-    _serial.write(TPUART_RESET_REQ); // send RESET REQUEST
 
-    for (nowTime = startTime = (word) millis() ; TimeDeltaWord(nowTime,startTime) < 1000 /* 1 sec */ ; nowTime = (word)millis())
+    /*_serial.write(TPUART_RESET_REQ); // send RESET REQUEST*/
+
+    /*for (nowTime = startTime = (word) millis() ; TimeDeltaWord(nowTime,startTime) < 1000 ; nowTime = (word)millis())*/
     {
       if (_serial.available() > 0)
       {
@@ -117,8 +134,9 @@ byte attempts = 10;
       }
       esp_task_wdt_reset();
     } // 1 sec ellapsed
+	/*_serial.end();*/
   } // while(attempts--)
-  _serial.end();
+
 #if defined(KNXTPUART_DEBUG_ERROR)
   DebugError("Reset failed, no answer from TPUART device\n");
 #endif
@@ -146,7 +164,7 @@ byte KnxTpUart::AttachComObjectsList(KnxComObject** comObjectsList, byte listSiz
 #define IS_COM(index) (comObjectsList[index]->GetIndicator() & KNX_COM_OBJ_C_INDICATOR)
 #define ADDR(index) (comObjectsList[index]->GetAddr())
 
-  if ((_rx.state!=RX_INIT) || (_tx.state!=TX_INIT)) return KNX_BUSCOUPLER_ERROR_NOT_INIT_STATE;
+  /*if ((_rx.state!=RX_INIT) || (_tx.state!=TX_INIT)) return KNX_BUSCOUPLER_ERROR_NOT_INIT_STATE;*/
 
   if (_orderedIndexTable)
   {  // a list is already attached, we detach it

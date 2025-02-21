@@ -75,9 +75,8 @@
 #define TPUART_STATE_INDICATION_PROTOCOL_ERROR_MASK   0x10
 #define TPUART_STATE_INDICATION_TEMP_WARNING_MASK     0x08
 
-
-
-
+#define KNX_RESETRESP_TIMEOUT 1000
+#define KNX_RESET_ATTEMPTS 10
 
 class KnxTpUart : public KnxBusCoupler {
     HardwareSerial& _serial;                  // Arduino HW serial port connected to the TPUART
@@ -90,6 +89,8 @@ class KnxTpUart : public KnxBusCoupler {
     byte _assignedComObjectsNb;               // Nb of assigned com objects
     byte *_orderedIndexTable;                 // Table containing the assigned com objects indexes ordered by increasing @
     byte _stateIndication;                    // Value of the last received state indication
+	unsigned long _resetRespTimeout;
+	word _resetAttempts;
 #if defined(KNXTPUART_DEBUG_INFO) || defined(KNXTPUART_DEBUG_ERROR)
     String *_debugStrPtr;
 #endif

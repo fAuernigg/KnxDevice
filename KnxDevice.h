@@ -51,7 +51,9 @@
 enum e_KnxDeviceStatus {
   KNX_DEVICE_OK = 0,
   KNX_DEVICE_NOT_IMPLEMENTED = 254,
-  KNX_DEVICE_ERROR = 255
+  KNX_DEVICE_ERROR = 255,
+  KNX_DEVICE_TRYINIT = 253,
+  KNX_DEVICE_BUSSERIAL_RESET = 252,
 };
 
 // Macro functions for conversion of physical and 2/3 level group addresses
@@ -155,6 +157,8 @@ class KnxDevice {
 
     e_KnxDeviceStatus commonInit(KnxComObject** dynComObjects_,
                           byte numberObjects);
+
+	e_KnxDeviceStatus checkInitBus();
 
     // Stop the KNX Device
     void end();
