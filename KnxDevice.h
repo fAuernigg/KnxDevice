@@ -56,6 +56,8 @@ enum e_KnxDeviceStatus {
   KNX_DEVICE_BUSSERIAL_RESET = 252,
 };
 
+#define KNX_WRITE_TIMEOUT 1000
+
 // Macro functions for conversion of physical and 2/3 level group addresses
 inline word P_ADDR(byte area, byte line, byte busdevice)
 { return (word) ( ((area&0xF)<<12) + ((line&0xF)<<8) + busdevice ); }
@@ -125,6 +127,9 @@ class KnxDevice {
     word _lastTXTimeMicros;                         // Time (in msec) of the last Tpuart Tx activity;
     KnxTelegram _txTelegram;                        // Telegram object used for telegrams sending
     KnxTelegram *_rxTelegram;                       // Reference to the telegram received by the TPUART
+	unsigned long _lastBusTime;						// Last bus response (read or write ack)
+	unsigned long _busWriteTime;					// Last time written to bus
+
 #if defined(KNXDEVICE_DEBUG_INFO)
     byte _nbOfInits;                                // Nb of Initialized Com Objects
     String *_debugStrPtr;
@@ -203,6 +208,8 @@ class KnxDevice {
 #if defined(KNXDEVICE_DEBUG_INFO)
     void SetDebugString(String *strPtr);
 #endif
+
+    unsigned long timeSinceBus();
 
   private:
     // Static GetTpUartEvents() function called by the KnxTpUart layer (callback)

@@ -50,6 +50,8 @@ KnxDevice::KnxDevice()
 #endif
     _comObjectsNb = 0;
     dynComObjects = 0;
+	_lastBusTime = 0;
+	_busWriteTime = 0;
 }
 
 
@@ -59,6 +61,7 @@ e_KnxDeviceStatus KnxDevice::begin(HardwareSerial& serial, word physicalAddr,
 {
   _knxBus = new KnxTpUart(serial ,physicalAddr, NORMAL);
   _rxTelegram = &_knxBus->GetReceivedTelegram();
+  _state = INIT;
 
   return commonInit(dynComObjects_, numberObjects);
 }
@@ -94,6 +97,9 @@ e_KnxDeviceStatus KnxDevice::commonInit(KnxComObject** dynComObjects_, byte numb
 
 e_KnxDeviceStatus KnxDevice::checkInitBus()
 {
+  if (_state == INIT)
+  	_lastBusTime = 0;
+
   if (!_knxBus) {
 #if defined(KNXDEVICE_DEBUG_INFO)
 	Knx.DebugInfo("!_knxBus\n");
@@ -116,8 +122,9 @@ e_KnxDeviceStatus KnxDevice::checkInitBus()
 #endif
 	return KNX_DEVICE_BUSSERIAL_RESET;
   }
-  else if (e == KNX_BUSCOUPLER_ERROR)
+  else if (e == KNX_BUSCOUPLER_ERROR) {
   	return KNX_DEVICE_TRYINIT;
+  }
 
   _knxBus->AttachComObjectsList(dynComObjects, _comObjectsNb);
   _knxBus->SetEvtCallback(&KnxDevice::GetTpUartEvents);
@@ -137,6 +144,7 @@ e_KnxDeviceStatus KnxDevice::checkInitBus()
    _nbOfInits = 0;
 #endif
 
+  _lastBusTime = millis();
 
   return KNX_DEVICE_OK;
 }
@@ -161,8 +169,14 @@ type_tx_action action;
 // This function call shall be placed in the "loop()" Arduino function
 void KnxDevice::task(void)
 {
-type_tx_action action;
-word nowTimeMillis, nowTimeMicros;
+  type_tx_action action;
+  word nowTimeMillis, nowTimeMicros;
+
+  if (_busWriteTime && (millis() - _busWriteTime) > KNX_WRITE_TIMEOUT) {
+    _busWriteTime = 0;
+    _state = INIT;
+	return;
+  }
 
   // STEP 1 : Initialize Com Objects having Init Read attribute
   if(!_initCompleted)
@@ -323,6 +337,8 @@ template <typename T>  e_KnxDeviceStatus KnxDevice::write(byte objectIndex, T va
   byte *destValue;
   byte length = dynComObjects[objectIndex]->GetLength();
 
+  _busWriteTime = millis();
+
   if (length <= 2 ) action.byteValue = (byte) value; // short object case
   else
   { // long object case, let's try to translate value to the com object DPT
@@ -361,6 +377,8 @@ e_KnxDeviceStatus KnxDevice::write(byte objectIndex, byte valuePtr[])
 type_tx_action action;
 byte *dptValue;
 byte length = dynComObjects[objectIndex]->GetLength();
+
+_busWriteTime = millis();
 
   if (length>2) // check we are in long object case
   { // add WRITE action in the TX action queue
@@ -413,6 +431,7 @@ byte targetedComObjIndex; // index of the Com Object targeted by the event
     switch(Knx._rxTelegram->GetCommand())
     {
       case KNX_COMMAND_VALUE_READ :
+	  	Knx._lastBusTime = millis();
 #if defined(KNXDEVICE_DEBUG_INFO)
     	Knx.DebugInfo("READ req.\n");
 #endif
@@ -427,6 +446,7 @@ byte targetedComObjIndex; // index of the Com Object targeted by the event
         break;
 
       case KNX_COMMAND_VALUE_RESPONSE :
+	    Knx._lastBusTime = millis();
 #if defined(KNXDEVICE_DEBUG_INFO)
       	Knx.DebugInfo("RESP req.\n");
 #endif
@@ -442,6 +462,7 @@ byte targetedComObjIndex; // index of the Com Object targeted by the event
 
 
       case KNX_COMMAND_VALUE_WRITE :
+	    Knx._lastBusTime = millis();
 #if defined(KNXDEVICE_DEBUG_INFO)
     	Knx.DebugInfo("WRITE req.\n");
 #endif
@@ -470,10 +491,20 @@ byte targetedComObjIndex; // index of the Com Object targeted by the event
   }
 }
 
+unsigned long KnxDevice::timeSinceBus()
+{
+	if (!_lastBusTime)
+		return 0;
+
+	return millis() - _lastBusTime;
+}
 
 // Static TxTelegramAck() function called by the KnxTpUart layer (callback)
 void KnxDevice::TxTelegramAck(e_BusCouplerTxAck value)
 {
+  Knx._lastBusTime = millis();
+  Knx._busWriteTime = 0;
+
   Knx._state = IDLE;
 #ifdef KNXDevice_DEBUG
   if(value != ACK_RESPONSE)
