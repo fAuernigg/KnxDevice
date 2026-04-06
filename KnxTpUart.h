@@ -76,7 +76,7 @@
 #define TPUART_STATE_INDICATION_TEMP_WARNING_MASK     0x08
 
 #define KNX_RESETRESP_TIMEOUT 1000
-#define KNX_RESET_ATTEMPTS 10
+#define KNX_RESET_ATTEMPTS 100
 
 class KnxTpUart : public KnxBusCoupler {
     HardwareSerial& _serial;                  // Arduino HW serial port connected to the TPUART

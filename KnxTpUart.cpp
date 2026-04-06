@@ -129,6 +129,7 @@ byte KnxTpUart::Reset(void)
 #if defined(KNXTPUART_DEBUG_INFO)
           DebugInfo("Reset successful\n");
 #endif
+          _resetAttempts = KNX_RESET_ATTEMPTS;
           return KNX_BUSCOUPLER_OK;
         }
       }
